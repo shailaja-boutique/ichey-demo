@@ -29,7 +29,15 @@
       <canvas id="ichey-canvas" class="experience__canvas" aria-hidden="true"></canvas>
 
       <div class="experience__fallback" id="experience-fallback">
-        <img src="ichey-logo.png" width="160" height="160" alt="ICHEY logo" />
+        <img
+          src="ichey-logo.png"
+          srcset="ichey-logo.png 1312w"
+          sizes="(max-width: 768px) 140px, 160px"
+          width="160"
+          height="160"
+          alt="ICHEY logo"
+          decoding="async"
+        />
         <p class="experience__fallback-name">ICHEY</p>
         <p class="experience__fallback-launch">Launching Soon</p>
         <p class="experience__fallback-note">Something wonderful is on its way.</p>

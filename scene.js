@@ -17,17 +17,51 @@ const body = document.body;
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
 const isNarrow = window.matchMedia("(max-width: 768px)").matches;
+const viewport = { w: 0, h: 0, aspect: 1, narrow: isNarrow, portrait: false, dpr: 1 };
+let resizeObserver;
 
 const OPENING_Y = 1.02;
+const MAX_DPR = 2;
 
 const SANTA = {
   walkStart: 0.85,
-  walkDuration: 4.35,
-  approachDuration: 1.15,
-  pauseBeforeOpen: 0.75,
-  openDuration: 1.75,
-  openTouchDelay: 0.3,
-  reactDuration: 1.2,
+  walkDuration: 3.95,
+  stopBlend: 0.38,
+};
+
+const AUTO_LID = {
+  delayAfterSanta: 0.4,
+  duration: 1.18,
+};
+
+/** Elliptical orbit for pastel floating gifts (stays below / beside LAUNCHING SOON). */
+const FLOAT_ORBIT = {
+  cx: 0,
+  cy: 0.54,
+  cz: 0.46,
+  rx: 1.18,
+  rz: 0.36,
+};
+
+const REVEAL = {
+  logo: 1.12,
+  name: 0.95,
+  launch: 1.42,
+  phaseGap: 0.18,
+  gifts: 2.85,
+};
+
+const ANIMATION_STATES = {
+  INITIAL: "initial",
+  SANTA_WALKING: "santaWalking",
+  SANTA_ARRIVED: "santaArrived",
+  OPENING_BOX: "openingBox",
+  BOX_OPENED: "boxOpened",
+  LOGO_REVEAL: "logoReveal",
+  ICHEY_REVEAL: "icheyReveal",
+  LAUNCH_REVEAL: "launchReveal",
+  GIFTS_MOVING: "giftsMoving",
+  FINAL_LAYOUT: "finalLayout",
 };
 
 const SANTA_MODEL = "assets/models/santa/santa-lod0.glb";
@@ -36,9 +70,10 @@ const BRAND_SAFE = {
   nameY0: 1.45,
   nameY1: 2.12,
   nameX: 0.78,
-  launchY0: 0.62,
-  launchY1: 1.55,
-  launchX: 1.12,
+  launchY0: 0.58,
+  launchY1: 1.58,
+  launchX: 1.38,
+  launchRightX: 0.52,
   logoY0: 2.02,
   logoX: 0.62,
   frontZ: 0.42,
@@ -92,6 +127,8 @@ let sparkles = [];
 let confetti3d = [];
 let glowRing;
 let burstLight;
+let snowmanRoot;
+let decorGifts = [];
 let rafId = 0;
 let boxHoverTilt = { x: 0, y: 0 };
 let santaRoot;
@@ -99,15 +136,15 @@ let santaModel;
 let santaMixer;
 let santaActions = {};
 let santaActiveAction;
+let santaLegsFrozen = false;
 const santaBones = {};
 const santaRestPose = new Map();
 const santaPos = {
-  enter: new THREE.Vector3(3.85, 0, 1.55),
-  approach: new THREE.Vector3(1.32, 0, 0.92),
-  open: new THREE.Vector3(1.14, 0, 0.76),
-  watch: new THREE.Vector3(1.26, 0, 1.05),
+  enter: new THREE.Vector3(-3.55, 0, 1.38),
+  stop: new THREE.Vector3(-1.42, 0, 1.06),
+  watch: new THREE.Vector3(-1.42, 0, 1.06),
 };
-const SANTA_FACE_BOX = -1.62;
+const SANTA_FACE_BOX = 1.12;
 const _worldA = new THREE.Vector3();
 const _worldB = new THREE.Vector3();
 
@@ -131,6 +168,104 @@ function canvasSize() {
   const host = canvas?.parentElement;
   if (!host) return { w: window.innerWidth, h: window.innerHeight };
   return { w: Math.max(host.clientWidth, 1), h: Math.max(host.clientHeight, 1) };
+}
+
+function updateViewportMetrics() {
+  const { w, h } = canvasSize();
+  viewport.w = w;
+  viewport.h = h;
+  viewport.aspect = w / Math.max(h, 1);
+  viewport.narrow = w <= 768;
+  viewport.portrait = h > w;
+  viewport.dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+}
+
+function getRendererPixelRatio() {
+  updateViewportMetrics();
+  const mem = navigator.deviceMemory;
+  if (viewport.narrow && mem && mem <= 4) return Math.min(viewport.dpr, 1.75);
+  return viewport.dpr;
+}
+
+function tuneTexture(tex) {
+  if (!tex || !renderer) return;
+  const aniso = renderer.capabilities?.getMaxAnisotropy?.() ?? 4;
+  tex.anisotropy = Math.min(aniso, 8);
+  const img = tex.image;
+  const w = img?.width ?? 0;
+  const h = img?.height ?? 0;
+  const pot =
+    w > 0 &&
+    h > 0 &&
+    (w & (w - 1)) === 0 &&
+    (h & (h - 1)) === 0;
+  tex.magFilter = THREE.LinearFilter;
+  if (pot) {
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+  } else {
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+  }
+  tex.needsUpdate = true;
+}
+
+function syncRendererSize() {
+  if (!renderer || !camera) return;
+  updateViewportMetrics();
+  const { w, h } = canvasSize();
+  renderer.setPixelRatio(getRendererPixelRatio());
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(h, 1);
+  camera.updateProjectionMatrix();
+}
+
+/** Frame box + full-body Santa across portrait/landscape without shrinking the whole scene. */
+function applyResponsiveCamera() {
+  if (!camera) return;
+  updateViewportMetrics();
+  const { w, h, portrait, aspect } = viewport;
+  const short = h < 640;
+  const veryNarrow = w <= 390;
+  const mid = w > 390 && w <= 768;
+
+  let fov = 43;
+  let lookY = 1.42;
+  let camY = 1.48;
+  let camZ = 5.58;
+  let lookZ = 0;
+
+  if (portrait) {
+    fov = veryNarrow ? 51 : mid ? 49 : 48;
+    lookY = short ? 0.96 : 1.04;
+    camY = lookY + 0.16;
+    camZ = 7.05 + clamp(0.78 - aspect, 0, 0.5) * 2.65;
+    if (short) camZ += 0.55;
+    lookZ = -0.04;
+  } else if (viewport.narrow || w <= 1024) {
+    fov = 44.5;
+    lookY = 1.32;
+    camY = 1.4;
+    camZ = 6.05;
+  } else if (w >= 1440) {
+    camZ = 5.72;
+    fov = 42.5;
+  }
+
+  camera.fov = fov;
+  camera.aspect = w / Math.max(h, 1);
+  camera.position.x = state.pointer.tx;
+  camera.position.y = camY + state.pointer.ty;
+  camera.position.z = camZ;
+  camera.lookAt(0, lookY, lookZ);
+  camera.updateProjectionMatrix();
+}
+
+function getSantaSceneScale() {
+  updateViewportMetrics();
+  if (viewport.portrait && viewport.h < 700) return 0.76;
+  if (viewport.portrait) return 0.8;
+  return viewport.narrow ? 0.86 : 0.96;
 }
 
 function mat(color, opts = {}) {
@@ -228,30 +363,40 @@ function clipObjectTree(object) {
   });
 }
 
-function createLabelPlane(text, fontPx, color, planeW, planeH, withGlow = false, depthWrite = false) {
+function createLabelPlane(text, fontPx, color, planeW, planeH, style = "solid", depthWrite = false) {
   const canvasEl = document.createElement("canvas");
-  canvasEl.width = 2048;
+  const hiRes = style === "launch-emerald";
+  canvasEl.width = hiRes ? 3072 : 2048;
   canvasEl.height = 512;
   const ctx = canvasEl.getContext("2d");
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-  ctx.font = `800 ${fontPx}px "Segoe UI", system-ui, sans-serif`;
+  const scaledFont = hiRes ? Math.round(fontPx * 1.5) : fontPx;
+  ctx.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  if (withGlow) {
-    const sweep = ctx.createLinearGradient(0, 0, canvasEl.width, 0);
-    sweep.addColorStop(0, "#e84a7a");
-    sweep.addColorStop(0.45, "#ff6b9d");
-    sweep.addColorStop(0.55, "#ffe66d");
-    sweep.addColorStop(1, "#e84a7a");
-    ctx.fillStyle = sweep;
-    ctx.shadowColor = "rgba(255, 200, 90, 0.85)";
-    ctx.shadowBlur = 36;
+  const cx = canvasEl.width / 2;
+  const cy = canvasEl.height / 2;
+  if (style === "launch-emerald") {
+    const shade = ctx.createLinearGradient(0, cy - scaledFont * 0.55, 0, cy + scaledFont * 0.55);
+    shade.addColorStop(0, "#1f9d6a");
+    shade.addColorStop(0.42, "#0b6b47");
+    shade.addColorStop(1, "#064a32");
+    ctx.fillStyle = shade;
+    ctx.shadowColor = "rgba(6, 74, 50, 0.32)";
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 2;
+    ctx.fillText(text, cx, cy);
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = Math.max(2, scaledFont * 0.018);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    ctx.strokeText(text, cx, cy);
   } else {
     ctx.fillStyle = color;
+    ctx.fillText(text, cx, cy);
   }
-  ctx.fillText(text, canvasEl.width / 2, canvasEl.height / 2);
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.colorSpace = THREE.SRGBColorSpace;
+  tuneTexture(texture);
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
@@ -260,7 +405,7 @@ function createLabelPlane(text, fontPx, color, planeW, planeH, withGlow = false,
   });
   applyOpeningClip(material);
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(planeW, planeH), material);
-  mesh.renderOrder = withGlow ? 3 : 6;
+  mesh.renderOrder = style === "launch-emerald" ? 4 : 6;
   return mesh;
 }
 
@@ -290,7 +435,7 @@ function createGiftBox() {
   boxRoot = new THREE.Group();
   boxRoot.scale.setScalar(isNarrow ? 0.86 : 1);
 
-  const shell = mat(0xff5e7a);
+  const shell = physMat(0xff5e7a, { roughness: 0.38, clearcoat: 0.42, metalness: 0.08 });
   const wallT = 0.11;
   const outerW = 1.65;
   const outerH = 1.05;
@@ -427,21 +572,21 @@ function createInteriorReveal(logoTexture) {
   launchGroup = new THREE.Group();
   const launchMesh = createLabelPlane(
     "LAUNCHING SOON",
-    isNarrow ? 92 : 158,
-    "#e84a7a",
-    isNarrow ? 2.35 : 3.55,
-    isNarrow ? 0.5 : 0.72,
-    true,
+    isNarrow ? 80 : 138,
+    "#0b6b47",
+    isNarrow ? 2.02 : 3.05,
+    isNarrow ? 0.44 : 0.62,
+    "launch-emerald",
     true
   );
   launchGroup.add(launchMesh);
   launchGroup.visible = false;
   launchGroup.userData = {
     inside: new THREE.Vector3(0, 0.38, -0.05),
-    settled: new THREE.Vector3(0, 1.1, 0.44),
+    settled: new THREE.Vector3(0, 1.08, 0.52),
     scaleFrom: 0.04,
-    scalePeak: isNarrow ? 1.08 : 1.22,
-    scaleTo: isNarrow ? 0.92 : 1.02,
+    scalePeak: isNarrow ? 0.98 : 1.08,
+    scaleTo: isNarrow ? 0.86 : 0.94,
   };
   interiorRoot.add(launchGroup);
 
@@ -574,62 +719,112 @@ const GIFT_BUILDERS = [
 
 function nudgeOutOfBrandSafe(pos) {
   if (!inBrandSafeZone(pos.x, pos.y, pos.z)) return;
-  const pushX = Math.sign(pos.x || 1) * (BRAND_SAFE.nameX + (isNarrow ? 0.42 : 0.52));
-  pos.x = pushX;
+  if (pos.x > 0.2) {
+    pos.x = BRAND_SAFE.launchRightX + 0.12;
+    pos.y = Math.min(pos.y, BRAND_SAFE.launchY0 - 0.08);
+  } else {
+    const pushX = -1 * (BRAND_SAFE.nameX + (isNarrow ? 0.42 : 0.52));
+    pos.x = pushX;
+  }
   if (pos.y > BRAND_SAFE.nameY0 && pos.y < BRAND_SAFE.nameY1) pos.y = BRAND_SAFE.nameY1 + 0.22;
   if (pos.z > BRAND_SAFE.frontZ) pos.z = Math.min(pos.z, 0.28);
 }
 
 function inBrandSafeZone(x, y, z) {
   if (Math.abs(x) < BRAND_SAFE.nameX && y >= BRAND_SAFE.nameY0 && y <= BRAND_SAFE.nameY1) return true;
-  if (Math.abs(x) < BRAND_SAFE.launchX && y >= BRAND_SAFE.launchY0 && y <= BRAND_SAFE.launchY1) return true;
+  if (x > -BRAND_SAFE.launchX && x < BRAND_SAFE.launchRightX && y >= BRAND_SAFE.launchY0 && y <= BRAND_SAFE.launchY1) {
+    return true;
+  }
+  if (x < -BRAND_SAFE.launchX && y >= BRAND_SAFE.launchY0 && y <= BRAND_SAFE.launchY1) return true;
   if (Math.abs(x) < BRAND_SAFE.logoX && y >= BRAND_SAFE.logoY0) return true;
   if (z > BRAND_SAFE.frontZ && Math.abs(x) < 0.62 && y >= 1.25 && y <= 2.25) return true;
   return false;
 }
 
-function buildGiftSlots(count) {
-  const side = isNarrow ? 1.05 : 1.22;
-  const slots = [
-    new THREE.Vector3(side, 2.38, 0.3),
-    new THREE.Vector3(-side, 2.32, 0.28),
-    new THREE.Vector3(side * 1.06, 2.58, 0.12),
-    new THREE.Vector3(-side * 1.04, 2.5, 0.1),
-    new THREE.Vector3(side * 1.1, 1.05, 0.16),
-    new THREE.Vector3(-side * 1.08, 1.02, 0.14),
-    new THREE.Vector3(side * 0.95, 0.9, 0.05),
-    new THREE.Vector3(-side * 0.98, 0.92, 0.02),
-    new THREE.Vector3(side * 1.15, 1.32, -0.06),
-  ];
-  return slots.slice(0, count);
+/**
+ * Clockwise arc: emerge → near “L” → over top of branding → settle near “N” (outside text).
+ */
+function buildGiftArcLayout(count) {
+  updateViewportMetrics();
+  const compact = viewport.portrait || viewport.narrow;
+  const headlineX = 0;
+  const halfW = compact ? 1.05 : 1.58;
+  const pathL = new THREE.Vector3(headlineX - halfW * 0.96, compact ? 0.98 : 1.04, 0.48);
+  const pathTop = new THREE.Vector3(headlineX + halfW * 0.05, compact ? 2.52 : 2.78, 0.2);
+  const midLT = new THREE.Vector3(
+    headlineX - halfW * 0.42,
+    compact ? 1.88 : 2.05,
+    0.32
+  );
+  const midTN = new THREE.Vector3(
+    headlineX + halfW * 0.48,
+    compact ? 1.72 : 1.92,
+    0.38
+  );
+  const nBase = new THREE.Vector3(headlineX + halfW * 0.72, compact ? 0.72 : 0.78, 0.56);
+  const layouts = [];
+  for (let i = 0; i < count; i += 1) {
+    const target = nBase.clone();
+    const ring = Math.floor(i / 3);
+    const slot = i % 3;
+    target.x += slot * 0.09 - 0.09;
+    target.y += ring * 0.065;
+    target.z += (slot % 2) * 0.04;
+    if (inBrandSafeZone(target.x, target.y, target.z)) {
+      target.y = BRAND_SAFE.launchY0 - 0.16;
+      target.x = Math.min(target.x, headlineX + halfW * 0.68);
+    }
+    layouts.push({ pathL: pathL.clone(), pathTop, midLT, midTN, target });
+  }
+  return layouts;
+}
+
+function giftBezierPoint(inside, ctrl, target, t) {
+  const u = 1 - t;
+  return new THREE.Vector3(
+    u * u * inside.x + 2 * u * t * ctrl.x + t * t * target.x,
+    u * u * inside.y + 2 * u * t * ctrl.y + t * t * target.y,
+    u * u * inside.z + 2 * u * t * ctrl.z + t * t * target.z
+  );
+}
+
+function sampleGiftArcPath(u, layout) {
+  const t = clamp(u, 0, 1);
+  if (t <= 0.12) {
+    const p = easeOutCubic(t / 0.12);
+    return new THREE.Vector3().lerpVectors(layout.inside, layout.pathL, p);
+  }
+  if (t <= 0.52) {
+    const p = (t - 0.12) / 0.4;
+    return giftBezierPoint(layout.pathL, layout.midLT, layout.pathTop, easeInOutCubic(p));
+  }
+  const p = (t - 0.52) / 0.48;
+  return giftBezierPoint(layout.pathTop, layout.midTN, layout.target, easeInOutCubic(p));
 }
 
 function createGifts() {
   const count = isNarrow ? 7 : 9;
-  const slots = buildGiftSlots(count);
+  const layouts = buildGiftArcLayout(count);
   gifts = [];
   for (let i = 0; i < count; i += 1) {
     const item = GIFT_BUILDERS[i]();
     clipObjectTree(item);
-    const target = slots[i % slots.length].clone();
+    const layout = layouts[i % layouts.length];
+    const inside = new THREE.Vector3(
+      (i % 3) * 0.04 - 0.04,
+      0.36 + (i % 4) * 0.028,
+      -0.13 - (i % 3) * 0.03
+    );
+    layout.inside = inside;
 
     item.userData = {
       index: i,
-      delay: i * 0.12,
-      target,
-      inside: new THREE.Vector3(
-        (i % 3) * 0.05 - 0.05,
-        0.36 + (i % 4) * 0.03,
-        -0.14 - (i % 3) * 0.035
-      ),
-      arc: new THREE.Vector3(
-        target.x * 0.16,
-        1.1,
-        Math.min(target.z, 0.14)
-      ),
-      spin: 0.28 + i * 0.06,
+      delay: (i / count) * (REVEAL.gifts * 0.78),
+      layout,
+      settleYaw: Math.atan2(layout.target.x - layout.pathL.x, layout.target.z - layout.pathL.z),
+      spin: 0.06,
     };
-    item.position.copy(item.userData.inside);
+    item.position.copy(inside);
     item.scale.setScalar(0.02);
     item.visible = true;
     item.traverse((o) => {
@@ -662,6 +857,118 @@ function createSparkles() {
     sparkles.push(p);
     interiorRoot.add(p);
   }
+}
+
+function createSnowman() {
+  snowmanRoot = new THREE.Group();
+  const snow = mat(0xf4f7fa, { roughness: 0.78 });
+  addMesh(snowmanRoot, new THREE.SphereGeometry(0.13, 22, 22), snow, new THREE.Vector3(0, 0.13, 0));
+  addMesh(snowmanRoot, new THREE.SphereGeometry(0.1, 20, 20), snow, new THREE.Vector3(0, 0.31, 0));
+  addMesh(snowmanRoot, new THREE.SphereGeometry(0.075, 18, 18), snow, new THREE.Vector3(0, 0.44, 0));
+  addMesh(snowmanRoot, new THREE.ConeGeometry(0.055, 0.12, 12), mat(0xff9f1c), new THREE.Vector3(0, 0.505, 0.062));
+  addMesh(snowmanRoot, new THREE.CylinderGeometry(0.082, 0.088, 0.048, 16), mat(0x2a2a2a), new THREE.Vector3(0, 0.468, 0));
+  [[-0.022, 0.448, 0.065], [0.022, 0.448, 0.065]].forEach(([x, y, z]) => {
+    addMesh(snowmanRoot, new THREE.SphereGeometry(0.009, 8, 8), mat(0x151515), new THREE.Vector3(x, y, z));
+  });
+  addMesh(snowmanRoot, new THREE.ConeGeometry(0.016, 0.06, 8), mat(0xff8c42), new THREE.Vector3(0, 0.445, 0.078)).rotation.x = Math.PI / 2;
+  snowmanRoot.position.set(viewport.narrow ? 1.38 : 1.52, 0, 1.1);
+  snowmanRoot.scale.setScalar(0);
+  snowmanRoot.renderOrder = 3;
+  scene.add(snowmanRoot);
+}
+
+function orbitPointAt(angle) {
+  return new THREE.Vector3(
+    FLOAT_ORBIT.cx + FLOAT_ORBIT.rx * Math.cos(angle),
+    FLOAT_ORBIT.cy,
+    FLOAT_ORBIT.cz + FLOAT_ORBIT.rz * Math.sin(angle)
+  );
+}
+
+function createSceneDecor() {
+  decorGifts = [];
+  const count = isNarrow ? 4 : 6;
+  const colors = [0xffc857, 0xffe66d, 0xb8f2e6, 0xffb4c8, 0xffd6a5, 0xc9b8ff];
+  const sizes = [0.095, 0.085, 0.09, 0.08, 0.088, 0.082];
+  for (let i = 0; i < count; i += 1) {
+    const specS = sizes[i % sizes.length] * (viewport.narrow ? 0.92 : 1);
+    const g = new THREE.Group();
+    const shell = physMat(colors[i % colors.length], { clearcoat: 0.55, roughness: 0.38 });
+    const h = specS * 0.88;
+    addMesh(g, new THREE.BoxGeometry(specS, h, specS), shell, new THREE.Vector3(0, h / 2, 0));
+    addMesh(
+      g,
+      new THREE.BoxGeometry(specS * 1.04, specS * 0.11, specS * 0.16),
+      ribbonMat(0xffe66d),
+      new THREE.Vector3(0, h, 0)
+    );
+    g.userData.orbitAngle = (i / count) * Math.PI * 2 - Math.PI * 0.5;
+    g.userData.uniformScale = 1;
+    g.scale.setScalar(0);
+    g.castShadow = true;
+    scene.add(g);
+    decorGifts.push(g);
+  }
+}
+
+function updateSceneDecor(timeS) {
+  if (!state.santaReady) return;
+  const c = getChoreoTimes();
+  const snowT = timeS >= c.stopEnd ? clamp((timeS - c.stopEnd) / 0.75, 0, 1) : 0;
+  if (snowmanRoot) {
+    snowmanRoot.scale.setScalar((viewport.narrow ? 0.82 : 0.92) * easeOutBack(snowT));
+    snowmanRoot.position.y = Math.sin(timeS * 1.1) * 0.003 * snowT;
+  }
+
+  const orbitT0 = c.giftsStart;
+  const orbitSpan = REVEAL.gifts;
+  const orbitU = timeS < orbitT0 ? 0 : clamp((timeS - orbitT0) / orbitSpan, 0, 1);
+  const spin = easeInOutCubic(orbitU) * Math.PI * 2;
+  const settled = orbitU >= 0.97;
+
+  decorGifts.forEach((g, i) => {
+    if (orbitU <= 0) {
+      g.scale.setScalar(0);
+      return;
+    }
+    const base = g.userData.orbitAngle;
+    const ang = settled ? base : base + spin;
+    const pos = orbitPointAt(ang);
+    if (inBrandSafeZone(pos.x, pos.y, pos.z)) {
+      pos.y = BRAND_SAFE.launchY0 - 0.14;
+      pos.x *= 1.06;
+    }
+    g.position.copy(pos);
+    const grow = clamp((orbitU - i * 0.04) / 0.22, 0, 1);
+    const sc = (viewport.narrow ? 0.88 : 1) * easeOutBack(grow);
+    g.scale.set(sc, sc, sc);
+    g.rotation.y = -ang + Math.PI * 0.5;
+    g.rotation.x = 0;
+    g.rotation.z = 0;
+  });
+}
+
+function publishChoreoState(timeS) {
+  const phase = state.santaReady ? getScenePhase(timeS) : "INITIAL";
+  const map = {
+    INITIAL: ANIMATION_STATES.INITIAL,
+    UNAVAILABLE: ANIMATION_STATES.INITIAL,
+    WALKING: ANIMATION_STATES.SANTA_WALKING,
+    STOPPED: ANIMATION_STATES.SANTA_ARRIVED,
+    AUTO_LID: ANIMATION_STATES.BOX_OPENED,
+    IDLE: ANIMATION_STATES.SANTA_ARRIVED,
+    REVEAL_LOGO: ANIMATION_STATES.LOGO_REVEAL,
+    REVEAL_ICHEY: ANIMATION_STATES.ICHEY_REVEAL,
+    REVEAL_HEADLINE: ANIMATION_STATES.LAUNCH_REVEAL,
+    GIFTS_MOVING: ANIMATION_STATES.GIFTS_MOVING,
+    GIFTS_SETTLING: ANIMATION_STATES.GIFTS_MOVING,
+    COMPLETE: ANIMATION_STATES.FINAL_LAYOUT,
+  };
+  const key = map[phase] || ANIMATION_STATES.INITIAL;
+  if (body.dataset.choreo === key) return;
+  body.dataset.choreo = key;
+  Object.values(ANIMATION_STATES).forEach((v) => body.classList.remove(`choreo--${v}`));
+  body.classList.add(`choreo--${key}`);
 }
 
 function createCelebrationFX() {
@@ -717,18 +1024,157 @@ function spawnDomConfetti() {
   }
 }
 
-function santaTimestamps() {
+function getChoreoTimes() {
   const walkEnd = SANTA.walkStart + SANTA.walkDuration;
-  const pauseEnd = walkEnd + SANTA.approachDuration;
-  const openStart = pauseEnd + SANTA.pauseBeforeOpen;
-  const openEnd = openStart + SANTA.openDuration;
-  return { walkEnd, pauseEnd, openStart, openEnd };
+  const stopEnd = walkEnd + SANTA.stopBlend;
+  const openStart = stopEnd + AUTO_LID.delayAfterSanta;
+  const openEnd = openStart + AUTO_LID.duration;
+  const logoStart = openEnd + 0.1;
+  const logoEnd = logoStart + REVEAL.logo;
+  const nameStart = logoEnd + REVEAL.phaseGap;
+  const nameEnd = nameStart + REVEAL.name;
+  const launchStart = nameEnd + REVEAL.phaseGap;
+  const launchEnd = launchStart + REVEAL.launch;
+  const giftsStart = launchEnd + REVEAL.phaseGap + 0.08;
+  const giftsEnd = giftsStart + REVEAL.gifts;
+  const settleEnd = giftsEnd + 1.05;
+  const dockShow = settleEnd + 0.35;
+  return {
+    walkEnd,
+    stopEnd,
+    openStart,
+    openEnd,
+    logoStart,
+    logoEnd,
+    nameStart,
+    nameEnd,
+    launchStart,
+    launchEnd,
+    giftsStart,
+    giftsEnd,
+    settleEnd,
+    dockShow,
+  };
+}
+
+function santaTimestamps() {
+  const c = getChoreoTimes();
+  return {
+    walkEnd: c.walkEnd,
+    pauseEnd: c.stopEnd,
+    openStart: c.openStart,
+    openEnd: c.openEnd,
+  };
+}
+
+function getAutoLidT(timeS) {
+  const c = getChoreoTimes();
+  if (timeS < c.openStart) return 0;
+  if (timeS >= c.openEnd) return 1;
+  return easeInOutCubic((timeS - c.openStart) / AUTO_LID.duration);
+}
+
+function getSantaPhase(timeS) {
+  if (!state.santaReady) return "UNAVAILABLE";
+  if (timeS < SANTA.walkStart) return "INITIAL";
+  const c = getChoreoTimes();
+  if (timeS < c.walkEnd) return "WALKING";
+  if (timeS < c.stopEnd) return "STOPPED";
+  return "IDLE";
+}
+
+function getScenePhase(timeS) {
+  if (!state.santaReady && timeS < 1) return "INITIAL";
+  const c = getChoreoTimes();
+  if (timeS < SANTA.walkStart) return "INITIAL";
+  if (timeS < c.walkEnd) return "WALKING";
+  if (timeS < c.stopEnd) return "STOPPED";
+  if (timeS < c.openEnd) return "AUTO_LID";
+  if (timeS < c.logoEnd) return "REVEAL_LOGO";
+  if (timeS < c.nameEnd) return "REVEAL_ICHEY";
+  if (timeS < c.launchEnd) return "REVEAL_HEADLINE";
+  if (timeS < c.giftsEnd) return "GIFTS_MOVING";
+  if (timeS < c.settleEnd) return "GIFTS_SETTLING";
+  return "COMPLETE";
 }
 
 function getBrandOffset() {
   if (!state.santaReady) return 0;
-  const { openEnd } = santaTimestamps();
-  return openEnd + 0.18 - TIMELINE.openStart;
+  const c = getChoreoTimes();
+  return c.logoStart - TIMELINE.logoStart;
+}
+
+function freezeSantaLegs() {
+  if (santaLegsFrozen) return;
+  santaLegsFrozen = true;
+  santaMixer?.stopAllAction();
+  Object.values(santaActions).forEach((a) => {
+    if (!a) return;
+    a.stop();
+    a.enabled = false;
+    a.setEffectiveWeight(0);
+  });
+  santaActiveAction = null;
+  resetSantaBones();
+}
+
+function beginSantaWalk() {
+  if (!santaLegsFrozen && santaActiveAction === santaActions.walk && santaActions.walk?.enabled) return;
+  santaLegsFrozen = false;
+  santaMixer?.stopAllAction();
+  Object.values(santaActions).forEach((a) => {
+    if (!a) return;
+    a.enabled = false;
+    a.setEffectiveWeight(0);
+  });
+  const walk = santaActions.walk;
+  if (!walk || !santaMixer) return;
+  walk.enabled = true;
+  walk.reset().setLoop(THREE.LoopRepeat).fadeIn(0.08).play();
+  walk.setEffectiveWeight(1);
+  santaActiveAction = walk;
+}
+
+function applySantaStandPose() {
+  if (!santaModel) return;
+  resetSantaBones();
+  restSantaRightArm();
+  if (santaBones.upperarm_L) {
+    santaBones.upperarm_L.rotation.x += 0.06;
+    santaBones.upperarm_L.rotation.z += 0.12;
+  }
+  if (santaBones.forearm_L) santaBones.forearm_L.rotation.x += 0.05;
+  santaModel.traverse((o) => {
+    if (o.isSkinnedMesh) o.skeleton?.update();
+  });
+}
+
+function getChoreoReveal(timeS) {
+  if (!state.santaReady) return null;
+  const c = getChoreoTimes();
+  const lidT = getAutoLidT(timeS);
+  return {
+    enter: easeOutCubic(clamp(timeS / 1.0, 0, 1)),
+    open: lidT,
+    logo:
+      timeS < c.logoStart
+        ? 0
+        : easeOutCubic(clamp((timeS - c.logoStart) / REVEAL.logo, 0, 1)),
+    name:
+      timeS < c.nameStart || timeS < c.logoEnd
+        ? 0
+        : easeOutCubic(clamp((timeS - c.nameStart) / REVEAL.name, 0, 1)),
+    launch:
+      timeS < c.launchStart || timeS < c.nameEnd
+        ? 0
+        : easeOutBack(clamp((timeS - c.launchStart) / REVEAL.launch, 0, 1)),
+    gifts:
+      timeS < c.giftsStart
+        ? 0
+        : easeOutCubic(clamp((timeS - c.giftsStart) / REVEAL.gifts, 0, 1)),
+    settle:
+      timeS < c.giftsEnd ? 0 : easeOutCubic(clamp((timeS - c.giftsEnd) / 1.05, 0, 1)),
+  };
 }
 
 function enhanceSantaMaterials(model) {
@@ -765,41 +1211,76 @@ function resetSantaBones() {
   });
 }
 
-function applySantaOpenPose(openU, reachOnly = false) {
+function restSantaRightArm() {
+  if (santaBones.upperarm_R) {
+    santaBones.upperarm_R.rotation.x += 0.14;
+    santaBones.upperarm_R.rotation.z += 0.22;
+    santaBones.upperarm_R.rotation.y += 0.1;
+  }
+  if (santaBones.forearm_R) santaBones.forearm_R.rotation.x += 0.12;
+  if (santaBones.hand_R) santaBones.hand_R.rotation.x += 0.06;
+}
+
+/** Character LEFT arm opens lid (upperarm_L / hand_L). Right arm stays at rest. */
+function applySantaLeftLidPose(openU, mode = "lift", lidT = 0) {
   if (!santaModel) return;
   resetSantaBones();
-  const u = easeInOutCubic(openU);
-  const lean = reachOnly ? u * 0.12 : u * 0.32;
+  restSantaRightArm();
+  const reachU = mode === "reach" ? easeInOutCubic(openU) : 1;
+  const liftU = mode === "reach" ? 0 : easeInOutCubic(openU);
+  const lid = clamp(lidT, 0, 1);
+  const lean = mode === "reach" ? reachU * 0.15 : 0.24 + liftU * 0.12 + lid * 0.08;
   if (santaBones.spine) santaBones.spine.rotation.x += lean;
-  if (santaBones.spine1) santaBones.spine1.rotation.x += lean * 0.65;
-  if (santaBones.neck) santaBones.neck.rotation.x += lean * 0.2;
-  if (santaBones.shoulder_R) santaBones.shoulder_R.rotation.z -= u * 0.08;
-  const arm = reachOnly ? 0.55 : 1;
-  if (santaBones.upperarm_R) {
-    santaBones.upperarm_R.rotation.x -= u * 1.45 * arm;
-    santaBones.upperarm_R.rotation.z -= u * 0.58 * arm;
-  }
-  if (santaBones.forearm_R) santaBones.forearm_R.rotation.x -= u * 1.08 * arm;
-  if (santaBones.hand_R) santaBones.hand_R.rotation.x -= u * 0.28 * arm;
+  if (santaBones.spine1) santaBones.spine1.rotation.x += lean * 0.68;
+  if (santaBones.neck) santaBones.neck.rotation.x += lean * 0.18;
+
+  const lReach = reachU * 1.55;
+  const lLift = liftU * 0.58 + lid * 0.52;
+  if (santaBones.shoulder_L) santaBones.shoulder_L.rotation.z -= reachU * 0.06;
   if (santaBones.upperarm_L) {
-    santaBones.upperarm_L.rotation.x -= u * 1.08 * arm;
-    santaBones.upperarm_L.rotation.z += u * 0.35 * arm;
+    santaBones.upperarm_L.rotation.x -= lReach + lLift * 0.95;
+    santaBones.upperarm_L.rotation.z -= reachU * 0.38 + liftU * 0.12;
+    santaBones.upperarm_L.rotation.y -= reachU * 0.16;
   }
-  if (santaBones.forearm_L) santaBones.forearm_L.rotation.x -= u * 0.78 * arm;
+  if (santaBones.forearm_L) {
+    santaBones.forearm_L.rotation.x -= lReach * 0.9 + lLift * 1.02;
+  }
+  if (santaBones.hand_L) {
+    santaBones.hand_L.rotation.x -= reachU * 0.2 + lid * 0.44;
+    santaBones.hand_L.rotation.z += reachU * 0.06;
+  }
+
+  santaModel.traverse((o) => {
+    if (o.isSkinnedMesh) o.skeleton?.update();
+  });
+}
+
+/** Left-hand presentation gesture synced with rising brand planes. */
+function applySantaLeftPresentPose(kind, u) {
+  if (!santaModel) return;
+  resetSantaBones();
+  restSantaRightArm();
+  const t = easeInOutCubic(clamp(u, 0, 1));
+  const lean = 0.1 + t * 0.08;
+  if (santaBones.spine) santaBones.spine.rotation.x += lean;
+  if (santaBones.spine1) santaBones.spine1.rotation.x += lean * 0.5;
+
+  const lifts = { logo: 1.05, ichey: 1.18, launch: 1.32 };
+  const reach = lifts[kind] ?? 1.1;
+  if (santaBones.upperarm_L) {
+    santaBones.upperarm_L.rotation.x -= t * reach;
+    santaBones.upperarm_L.rotation.z += 0.35 + t * 0.2;
+  }
+  if (santaBones.forearm_L) santaBones.forearm_L.rotation.x -= t * (reach * 0.82);
+  if (santaBones.hand_L) santaBones.hand_L.rotation.x -= t * 0.32;
+
   santaModel.traverse((o) => {
     if (o.isSkinnedMesh) o.skeleton?.update();
   });
 }
 
 function getSantaOpenT(timeS) {
-  if (!state.santaReady) return 0;
-  const { openStart, openEnd } = santaTimestamps();
-  if (timeS < openStart) return 0;
-  const local = (timeS - openStart) / SANTA.openDuration;
-  if (local < SANTA.openTouchDelay) return 0;
-  const lift = (local - SANTA.openTouchDelay) / (1 - SANTA.openTouchDelay);
-  if (timeS >= openEnd) return 1;
-  return easeInOutCubic(clamp(lift, 0, 1));
+  return state.santaReady ? getAutoLidT(timeS) : 0;
 }
 
 function playSantaAction(name, fade = 0.22, loop = THREE.LoopRepeat) {
@@ -834,8 +1315,7 @@ async function initSanta() {
     (gltf) => {
       try {
         santaModel = gltf.scene;
-        const scale = isNarrow ? 0.84 : 0.96;
-        santaModel.scale.setScalar(scale);
+        santaModel.scale.setScalar(getSantaSceneScale());
         santaModel.traverse((o) => {
           if (o.isMesh) {
             o.castShadow = true;
@@ -872,7 +1352,7 @@ async function initSanta() {
 
 function syncWalkStepSpeed() {
   const walk = santaActions.walk;
-  if (!walk) return;
+  if (!walk || !walk.enabled) return;
   const clipDur = walk.getClip().duration || 1;
   const cycles = Math.max(3, Math.round(SANTA.walkDuration / clipDur));
   walk.timeScale = (clipDur * cycles) / SANTA.walkDuration;
@@ -881,8 +1361,8 @@ function syncWalkStepSpeed() {
 function updateSanta(timeS) {
   if (!santaRoot || !state.santaReady) return;
 
-  const { walkEnd, pauseEnd, openStart, openEnd } = santaTimestamps();
-  const reactEnd = openEnd + SANTA.reactDuration;
+  const phase = getSantaPhase(timeS);
+  const c = getChoreoTimes();
 
   if (timeS < SANTA.walkStart) {
     santaRoot.visible = false;
@@ -890,60 +1370,43 @@ function updateSanta(timeS) {
   }
 
   santaRoot.visible = true;
-  if (santaMixer) santaMixer.timeScale = 1;
+  santaRoot.position.y = 0;
 
-  if (timeS < walkEnd) {
-    const u = easeInOutCubic((timeS - SANTA.walkStart) / SANTA.walkDuration);
-    santaRoot.position.lerpVectors(santaPos.enter, santaPos.approach, u);
-    santaRoot.rotation.y = lerp(Math.PI * 0.95, SANTA_FACE_BOX, u);
-    playSantaAction("walk", 0.12);
-    syncWalkStepSpeed();
-  } else if (timeS < pauseEnd) {
-    const u = easeOutCubic((timeS - walkEnd) / SANTA.approachDuration);
-    santaRoot.position.lerpVectors(santaPos.approach, santaPos.open, u);
-    santaRoot.rotation.y = lerp(SANTA_FACE_BOX, SANTA_FACE_BOX + 0.05, u);
-    playSantaAction("walk", 0.2);
-    if (santaActions.walk) santaActions.walk.timeScale = 0.42;
-  } else if (timeS < openStart) {
-    santaRoot.position.copy(santaPos.open);
-    santaRoot.rotation.y = SANTA_FACE_BOX;
-    playSantaAction("look_around", 0.25);
-    if (santaActions.look_around) santaActions.look_around.timeScale = 0.75;
-  } else if (timeS < openEnd) {
-    const local = (timeS - openStart) / SANTA.openDuration;
-    santaRoot.position.copy(santaPos.open);
-    santaRoot.rotation.y = SANTA_FACE_BOX;
-    if (santaMixer) santaMixer.timeScale = 0.45;
-    playSantaAction("idle", 0.15);
-    if (local < SANTA.openTouchDelay) {
-      applySantaOpenPose(local / SANTA.openTouchDelay, true);
-    } else {
-      const lift = (local - SANTA.openTouchDelay) / (1 - SANTA.openTouchDelay);
-      applySantaOpenPose(lift, false);
-    }
-  } else if (timeS < reactEnd) {
-    const u = easeOutCubic((timeS - openEnd) / SANTA.reactDuration);
-    santaRoot.position.lerpVectors(santaPos.open, santaPos.watch, u);
-    santaRoot.rotation.y = lerp(SANTA_FACE_BOX, SANTA_FACE_BOX + 0.08, u);
+  if (phase === "WALKING") {
     if (santaMixer) santaMixer.timeScale = 1;
-    playSantaAction("idle", 0.25);
-    applySantaOpenPose(lerp(0.95, 0.2, u));
-  } else {
-    santaRoot.position.copy(santaPos.watch);
-    santaRoot.rotation.y = SANTA_FACE_BOX + 0.1 + Math.sin(timeS * 0.55) * 0.03;
-    playSantaAction("idle", 0.2);
-    applySantaOpenPose(0.16);
-    santaRoot.position.y = Math.sin(timeS * 1.1) * 0.006;
+    beginSantaWalk();
+    const u = easeInOutCubic((timeS - SANTA.walkStart) / SANTA.walkDuration);
+    santaRoot.position.lerpVectors(santaPos.enter, santaPos.stop, u);
+    santaRoot.rotation.y = lerp(0.62, SANTA_FACE_BOX, u);
+    syncWalkStepSpeed();
+    if (u >= 0.992) {
+      santaRoot.position.copy(santaPos.stop);
+      santaRoot.rotation.y = SANTA_FACE_BOX;
+      freezeSantaLegs();
+    }
+    return;
   }
+
+  freezeSantaLegs();
+
+  santaRoot.position.copy(santaPos.stop);
+  santaRoot.rotation.y = SANTA_FACE_BOX;
+
+  applySantaStandPose();
+  const u = phase === "STOPPED" ? easeOutCubic((timeS - c.walkEnd) / SANTA.stopBlend) : 1;
+  if (u < 0.7) santaRoot.rotation.y = lerp(SANTA_FACE_BOX, SANTA_FACE_BOX + 0.03, u / 0.7);
+  santaRoot.position.y = Math.sin(timeS * 0.85) * 0.003;
 }
 
 function setupLights() {
   scene.add(new THREE.HemisphereLight(0xfff8ff, 0xffb4c4, 1));
   scene.add(new THREE.AmbientLight(0xffffff, 0.38));
-  const key = new THREE.DirectionalLight(0xffffff, 1.3);
+  const key = new THREE.DirectionalLight(0xffffff, 1.38);
   key.position.set(4, 7, 5);
   key.castShadow = true;
-  key.shadow.mapSize.set(isNarrow ? 512 : 1024, isNarrow ? 512 : 1024);
+  key.shadow.bias = -0.00022;
+  key.shadow.normalBias = 0.02;
+  key.shadow.mapSize.set(viewport.narrow ? 768 : 1024, viewport.narrow ? 768 : 1024);
   scene.add(key);
   const fill = new THREE.DirectionalLight(0x9bf6ff, 0.5);
   fill.position.set(-4, 3, 2);
@@ -955,7 +1418,7 @@ function setupLights() {
 
 function getPhaseT(t) {
   const off = getBrandOffset();
-  const openDur = state.santaReady ? SANTA.openDuration : TIMELINE.openDuration;
+  const openDur = state.santaReady ? AUTO_LID.duration : TIMELINE.openDuration;
   return {
     enter: easeOutCubic(clamp(t / 1.0, 0, 1)),
     open: easeInOutCubic(clamp((t - TIMELINE.openStart - off) / openDur, 0, 1)),
@@ -975,73 +1438,53 @@ function startPlayback() {
   body.classList.add("playback-active");
 }
 
-function updateGifts(open, launchT, giftsT, timeS) {
-  if (timeS < TIMELINE.giftsStart + getBrandOffset() || launchT < 0.92) {
-    gifts.forEach((gift) => {
-      gift.position.copy(gift.userData.inside);
-      gift.scale.setScalar(0.02);
-    });
-    return;
+function giftsPhaseGate(timeS, launchT) {
+  if (state.santaReady) {
+    const c = getChoreoTimes();
+    return timeS >= c.giftsStart && launchT >= 0.96;
   }
+  return timeS >= TIMELINE.giftsStart + getBrandOffset() && launchT >= 0.92;
+}
+
+function updateGifts(open, launchT, giftsT, timeS) {
   gifts.forEach((gift) => {
-    const u = gift.userData;
-    const local = clamp((giftsT - u.delay) / 0.52, 0, 1);
-    if (open < 0.45 || local <= 0) {
-      gift.position.copy(u.inside);
-      gift.scale.setScalar(lerp(0.02, 0.08, open));
-      return;
-    }
-    const e = easeOutBack(local);
-    const mid = new THREE.Vector3().lerpVectors(u.inside, u.arc, easeOutCubic(local));
-    gift.position.lerpVectors(mid, u.target, easeOutCubic(local));
-    const lift = Math.sin(e * Math.PI) * 0.26;
-    gift.position.y += lift;
-    gift.position.y += Math.sin(timeS * 1.35 + u.index) * 0.025 * local;
-    gift.scale.setScalar(lerp(0.08, isNarrow ? 1.02 : 1.16, e));
-    gift.rotation.y = timeS * u.spin;
-    gift.rotation.x = Math.sin(timeS * 0.85 + u.index) * 0.16;
-    nudgeOutOfBrandSafe(gift.position);
-    setGroupClipped(gift, local < 0.92 && !emergedPastRim(gift, -0.02));
+    gift.visible = false;
+    gift.scale.setScalar(0.001);
   });
 }
 
 function updateInteriorReveal(phase, timeS) {
   if (!logoGroup) return;
 
+  const choreo = state.santaReady ? getChoreoReveal(timeS) : null;
   const off = getBrandOffset();
-  const { logo, name, launch, open } = phase;
-  const ready = open >= 0.42;
+  const reveal = choreo ?? phase;
+  const { logo, name, launch } = reveal;
+  const c = state.santaReady ? getChoreoTimes() : null;
+  const lidReady = state.santaReady ? timeS >= c.openEnd : phase.open >= 0.42;
 
-  if (!ready) {
+  if (!lidReady) {
     logoGroup.position.copy(logoGroup.userData.inside);
     logoGroup.scale.setScalar(0.03);
     nameGroup.visible = false;
     launchGroup.visible = false;
-    return;
-  }
-
-  if (timeS < TIMELINE.nameStart + off) {
-    nameGroup.visible = false;
-    nameGroup.position.copy(nameGroup.userData.inside);
-    nameGroup.scale.setScalar(0.03);
-    setGroupClipped(nameGroup, true);
-  }
-
-  if (timeS < TIMELINE.launchStart + off) {
-    launchGroup.visible = false;
-    launchGroup.position.copy(launchGroup.userData.inside);
-    launchGroup.scale.setScalar(launchGroup.userData.scaleFrom);
-    setGroupClipped(launchGroup, true);
-  }
-
-  if (timeS < TIMELINE.logoStart + off) {
-    logoGroup.position.copy(logoGroup.userData.inside);
-    logoGroup.scale.setScalar(0.03);
     setGroupClipped(logoGroup, true);
     return;
   }
 
-  if (logo > 0) {
+  const logoAllowed = state.santaReady ? timeS >= c.logoStart : timeS >= TIMELINE.logoStart + off;
+  const nameAllowed = state.santaReady
+    ? timeS >= c.nameStart && timeS >= c.logoEnd
+    : timeS >= TIMELINE.nameStart + off;
+  const launchAllowed = state.santaReady
+    ? timeS >= c.launchStart && timeS >= c.nameEnd
+    : timeS >= TIMELINE.launchStart + off;
+
+  if (!logoAllowed || logo <= 0) {
+    logoGroup.position.copy(logoGroup.userData.inside);
+    logoGroup.scale.setScalar(0.03);
+    setGroupClipped(logoGroup, true);
+  } else {
     logoGroup.position.lerpVectors(
       logoGroup.userData.inside,
       logoGroup.userData.settled,
@@ -1049,16 +1492,16 @@ function updateInteriorReveal(phase, timeS) {
     );
     logoGroup.scale.setScalar(lerp(0.05, 1, easeOutBack(logo)));
     faceCamera(logoGroup);
-    logoGroup.position.y += Math.sin(timeS * 1.15) * 0.01 * logo;
+    logoGroup.position.y += Math.sin(timeS * 1.15) * 0.008 * (1 - logo);
     setGroupClipped(logoGroup, !emergedPastRim(logoGroup) && logo < 0.98);
-  } else {
-    logoGroup.position.copy(logoGroup.userData.inside);
-    logoGroup.scale.setScalar(0.04);
-    faceCamera(logoGroup);
-    setGroupClipped(logoGroup, true);
   }
 
-  if (timeS >= TIMELINE.nameStart + off && name > 0.02 && logo >= 0.82) {
+  if (!nameAllowed || name <= 0) {
+    nameGroup.visible = false;
+    nameGroup.position.copy(nameGroup.userData.inside);
+    nameGroup.scale.setScalar(0.03);
+    setGroupClipped(nameGroup, true);
+  } else {
     nameGroup.visible = true;
     nameGroup.position.lerpVectors(
       nameGroup.userData.inside,
@@ -1068,40 +1511,33 @@ function updateInteriorReveal(phase, timeS) {
     nameGroup.scale.setScalar(lerp(0.05, 1, easeOutBack(name)));
     faceCamera(nameGroup);
     setGroupClipped(nameGroup, !emergedPastRim(nameGroup) && name < 0.98);
-  } else {
-    nameGroup.visible = false;
-    nameGroup.position.copy(nameGroup.userData.inside);
-    nameGroup.scale.setScalar(0.03);
-    setGroupClipped(nameGroup, true);
   }
 
-  if (timeS >= TIMELINE.launchStart + off && launch > 0.02 && name >= 0.72) {
+  if (!launchAllowed || launch <= 0) {
+    launchGroup.visible = false;
+    launchGroup.position.copy(launchGroup.userData.inside);
+    launchGroup.scale.setScalar(launchGroup.userData.scaleFrom);
+    setGroupClipped(launchGroup, true);
+  } else {
     launchGroup.visible = true;
     const u = launchGroup.userData;
     const rise = easeOutCubic(launch);
     launchGroup.position.lerpVectors(u.inside, u.settled, rise);
     const dramatic = easeOutBack(launch);
     let scaleT = lerp(u.scaleFrom, u.scalePeak, dramatic);
-    if (launch > 0.72) {
-      scaleT = lerp(scaleT, u.scaleTo, (launch - 0.72) / 0.28);
-    }
+    if (launch > 0.72) scaleT = lerp(scaleT, u.scaleTo, (launch - 0.72) / 0.28);
     launchGroup.scale.setScalar(scaleT);
     launchGroup.rotation.x = lerp(0.32, 0, easeOutCubic(launch));
     faceCamera(launchGroup);
-    launchGroup.position.y += Math.sin(timeS * 1.35) * 0.006 * (1 - launch * 0.35);
+    launchGroup.position.y += Math.sin(timeS * 1.35) * 0.004 * (1 - launch);
     setGroupClipped(launchGroup, !emergedPastRim(launchGroup, 0.02) && launch < 0.96);
     if (rimGlow) rimGlow.intensity = 0.45 + launch * 1.05;
-  } else {
-    launchGroup.visible = false;
-    launchGroup.position.copy(launchGroup.userData.inside);
-    launchGroup.scale.setScalar(launchGroup.userData.scaleFrom);
-    setGroupClipped(launchGroup, true);
   }
 }
 
 function updateScene(timeS) {
   if (!boxRoot) return;
-  const phase = getPhaseT(timeS);
+  const phase = state.santaReady && getChoreoReveal(timeS) ? getChoreoReveal(timeS) : getPhaseT(timeS);
 
   const float = Math.sin(timeS * 0.75) * 0.022;
   const vibrate = phase.open > 0.05 && phase.open < 0.85 ? Math.sin(timeS * 20) * 0.012 * (1 - phase.open) : 0;
@@ -1112,18 +1548,18 @@ function updateScene(timeS) {
   boxRoot.updateMatrixWorld(true);
   syncOpeningClipPlane();
 
-  const santaOpenT = getSantaOpenT(timeS);
-  let lidMix = phase.open;
-  if (state.santaReady) {
-    lidMix = timeS < santaTimestamps().openStart ? 0 : Math.max(santaOpenT, phase.open);
-  }
+  const lidMix = state.santaReady ? getAutoLidT(timeS) : phase.open;
   if (lidPivot) lidPivot.rotation.x = -clamp(lidMix, 0, 1) * 1.7;
 
-  const glow = Math.max(phase.open, santaOpenT) * (2.5 + Math.sin(timeS * 2.2) * 0.25);
+  const glow = lidMix * (2.5 + Math.sin(timeS * 2.2) * 0.25);
   if (innerGlow) innerGlow.intensity = glow;
   if (rimGlow) rimGlow.intensity = 0.35 + phase.open * 0.9;
 
-  if (phase.gifts > 0.45 && !state.confettiFired) {
+  const scenePhase = state.santaReady ? getScenePhase(timeS) : "INITIAL";
+  if (
+    (phase.gifts > 0.45 || scenePhase === "GIFTS_MOVING") &&
+    !state.confettiFired
+  ) {
     state.confettiFired = true;
     spawnConfetti3D(isNarrow ? 70 : 120);
     spawnDomConfetti();
@@ -1146,9 +1582,12 @@ function updateScene(timeS) {
     s.visible = phase.open >= 0.2;
   });
 
+  publishChoreoState(timeS);
+
   updateSanta(timeS);
   updateInteriorReveal(phase, timeS);
   updateGifts(phase.open, phase.launch, phase.gifts, timeS);
+  updateSceneDecor(timeS);
 
   confetti3d.forEach((c) => {
     c.userData.age += 1 / 60;
@@ -1163,14 +1602,10 @@ function updateScene(timeS) {
   const parallax = isCoarsePointer ? 0 : 0.5;
   state.pointer.tx = lerp(state.pointer.tx, state.pointer.x * 0.14 * parallax, 0.06);
   state.pointer.ty = lerp(state.pointer.ty, state.pointer.y * 0.08 * parallax, 0.06);
-  camera.position.x = state.pointer.tx;
-  camera.position.y = (isNarrow ? 1.44 : 1.46) + state.pointer.ty;
-  camera.lookAt(0, isNarrow ? 1.28 : 1.42, 0);
-  camera.position.z = isNarrow ? 5.9 : 5.58;
+  applyResponsiveCamera();
 
-  if (timeS >= TIMELINE.dockShow + getBrandOffset()) {
-    storeDock?.classList.add("is-visible");
-  }
+  const dockAt = state.santaReady ? getChoreoTimes().dockShow : TIMELINE.dockShow + getBrandOffset();
+  if (timeS >= dockAt) storeDock?.classList.add("is-visible");
 }
 
 function animate(now) {
@@ -1187,10 +1622,6 @@ function animate(now) {
     ) {
       startPlayback();
     }
-    if (santaMixer && state.lastFrame) {
-      const dt = Math.min((now - state.lastFrame) / 1000, 0.05);
-      santaMixer.update(dt);
-    }
     state.lastFrame = now;
     renderer.render(scene, camera);
     return;
@@ -1198,9 +1629,11 @@ function animate(now) {
 
   const dt = state.lastFrame ? Math.min((now - state.lastFrame) / 1000, 0.05) : 1 / 60;
   state.lastFrame = now;
-  if (santaMixer) santaMixer.update(dt);
 
   state.elapsed = (now - state.playbackStart) / 1000;
+  const santaPhase = state.santaReady ? getSantaPhase(state.elapsed) : "INITIAL";
+  if (santaMixer && santaPhase === "WALKING") santaMixer.update(dt);
+
   updateScene(state.elapsed);
   renderer.render(scene, camera);
 }
@@ -1216,15 +1649,19 @@ function initThree() {
   }
 
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: !isNarrow });
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: "high-performance",
+    });
   } catch {
     markFallback("webgl");
     return;
   }
 
-  const { w, h } = canvasSize();
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isNarrow ? 1.35 : 2));
-  renderer.setSize(w, h, false);
+  updateViewportMetrics();
+  syncRendererSize();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = isNarrow ? 1.02 : 1.08;
@@ -1234,12 +1671,13 @@ function initThree() {
 
   scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0xfff5f8, 0.036);
-  camera = new THREE.PerspectiveCamera(43, w / h, 0.1, 50);
-  camera.position.set(0, isNarrow ? 1.44 : 1.46, isNarrow ? 5.9 : 5.58);
-  camera.lookAt(0, isNarrow ? 1.28 : 1.42, 0);
+  camera = new THREE.PerspectiveCamera(43, viewport.aspect, 0.1, 50);
+  applyResponsiveCamera();
 
   setupLights();
   createGiftBox();
+  createSnowman();
+  createSceneDecor();
   createSparkles();
   createCelebrationFX();
   initSanta();
@@ -1249,12 +1687,19 @@ function initThree() {
     "ichey-logo.png",
     (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace;
+      tuneTexture(tex);
       createInteriorReveal(tex);
       createGifts();
       state._logoReady = true;
       if (state.santaReady || state.santaFailed) state._loadTime = performance.now();
       body.classList.add("experience-webgl");
       state.webgl = true;
+      const host = canvas?.parentElement;
+      if (host && typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => syncRendererSize());
+        resizeObserver.observe(host);
+      }
+      window.addEventListener("orientationchange", syncRendererSize, { passive: true });
       rafId = requestAnimationFrame(animate);
     },
     undefined,
@@ -1265,11 +1710,10 @@ function initThree() {
 }
 
 function onResize() {
-  if (!renderer || !camera) return;
-  const { w, h } = canvasSize();
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-  renderer.setSize(w, h, false);
+  syncRendererSize();
+  if (santaModel && state.santaReady) {
+    santaModel.scale.setScalar(getSantaSceneScale());
+  }
 }
 
 const FALLING_PALETTE = [
@@ -1462,5 +1906,7 @@ initDom();
 window.addEventListener("beforeunload", () => {
   state.running = false;
   cancelAnimationFrame(rafId);
+  resizeObserver?.disconnect();
+  window.removeEventListener("orientationchange", syncRendererSize);
   renderer?.dispose();
 });
