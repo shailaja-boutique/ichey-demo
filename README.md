@@ -1,86 +1,64 @@
-# ICHEY Coming Soon
+# ICHEY — Cinematic Coming Soon
 
-Static landing page for **ICHEY** — brand identity and launch announcement only. Suitable for GitHub Pages or any static host.
+Premium static brand-launch page for **ICHEY** (GitHub Pages + custom domain `ichey.in`).
 
-## Project structure
+## Structure (matches production repo layout)
 
 ```
-ichey_demoo/
+├── CNAME
 ├── index.html
 ├── styles.css
-├── assets/images/
-│   ├── ichey-logo.png
-│   ├── google-play-badge.svg
-│   └── apple-app-store-badge.svg
+├── scene.js
+├── ichey-logo.png
+├── google-play-badge.svg
+├── apple-app-store-badge.svg
+├── assets/vendor/three.module.min.js   # Three.js r170 (MIT)
 └── README.md
 ```
 
+Legacy copies under `assets/images/` may remain locally; published paths use the **root** filenames above (same as [ichey-demo](https://github.com/shailaja-boutique/ichey-demo)).
+
+## Experience
+
+- **Scene A:** Warm ivory atmosphere, timed gift-box reveal (Three.js).
+- **Scenes B–C:** Scroll-driven wonder → discovery → anticipation with sticky WebGL canvas.
+- **Scenes D–E:** Brand reveal, Coming Soon, non-clickable store badges, footer.
+
+**Fallbacks:** `prefers-reduced-motion`, WebGL failure, or no JavaScript → static layout with original logo and full copy (no scroll-linked 3D).
+
+## Third-party license
+
+- [Three.js](https://github.com/mrdoob/three.js) **r170** — MIT — vendored at `assets/vendor/three.module.min.js` (not loaded from a CDN in production).
+
 ## Preview locally
 
-From the project folder:
+ES modules require a local server (not `file://`):
 
-**Python 3:**
-
-```bash
+```powershell
 cd C:\Users\aruns\Downloads\ichey_demoo
 python -m http.server 8080
 ```
 
-Then open [http://localhost:8080](http://localhost:8080).
+Open `http://localhost:8080`.
 
-**PowerShell (no Python):**
+## Deploy
 
-```powershell
-cd C:\Users\aruns\Downloads\ichey_demoo
-npx --yes serve -l 8080
-```
+Push to `main` on `shailaja-boutique/ichey-demo`. GitHub Pages serves from root; **do not remove** `CNAME` (`ichey.in`).
 
-## Logo asset
+### Store links (later)
 
-Place or replace the finalized toy-box logo at:
+In `index.html`, replace the badge `<div>` elements with `<a class="store-badge" href="...">` when verified URLs exist. Update CSS per comment in `styles.css` if needed.
 
-`assets/images/ichey-logo.png`
+## Checks performed
 
-The site expects this file unchanged (original colours and transparency).
+- HTTP 200 for `index.html`, `scene.js`, `three.module.min.js`, `ichey-logo.png`, badge SVGs.
+- Three.js module import resolves (r170).
+- Copy reviewed for confidentiality (no product-workflow language).
+- `CNAME` unchanged (`ichey.in`).
 
-## Adding app store links later
+## Known limitations
 
-In `index.html`, replace the non-clickable `<div class="store-badge">` blocks with `<a class="store-badge" href="...">` elements (see the HTML comment above the badges section). Remove the “Coming soon” labels when URLs are live.
-
-## Deploy to GitHub Pages
-
-1. Initialize a git repository in this folder (if you have not already):
-
-   ```bash
-   git init
-   git add .
-   git commit -m "Add ICHEY coming soon page"
-   ```
-
-2. Create a new GitHub repository and push:
-
-   ```bash
-   git remote add origin https://github.com/YOUR_USERNAME/ichey-coming-soon.git
-   git branch -M main
-   git push -u origin main
-   ```
-
-3. In GitHub: **Settings → Pages → Build and deployment**
-   - Source: **Deploy from a branch**
-   - Branch: **main** / **/ (root)**
-
-4. After deployment, the site is available at  
-   `https://YOUR_USERNAME.github.io/ichey-coming-soon/`
-
-### Custom domain (`ichey.in`) later
-
-1. In the same **Pages** settings, set **Custom domain** to `ichey.in` (or `www.ichey.in`).
-2. At your domain registrar, add DNS records as GitHub instructs (typically `A` records for the apex and/or a `CNAME` for `www`).
-3. Enable **Enforce HTTPS** once DNS has propagated.
-
-Do not change DNS until you are ready to point the live domain at this temporary page.
-
-## Notes
-
-- No backend, build step, or npm dependencies are required for the site itself.
-- The logo PNG is large (~1.4 MB); compressing it with a lossless tool can improve load time without changing appearance.
+- Gift-box and floating shapes are **procedural** Three.js geometry (not pre-rendered video); quality is stylized-realistic, not film-grade CGI.
+- Logo PNG is large (~1.4 MB); compress for faster first paint if desired without altering artwork.
+- Lighthouse scores were not automated in this environment; test in Chrome DevTools before/after deploy.
+- Instagram motion reference was not fetched; pacing follows the written storyboard.
