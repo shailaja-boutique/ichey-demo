@@ -245,6 +245,7 @@ function applyResponsiveCamera() {
   let camZ = 5.58;
   let lookZ = 0;
 
+  let camX = state.pointer.tx;
   if (portrait) {
     fov = veryNarrow ? 51 : mid ? 49 : 48;
     lookY = short ? 0.96 : 1.04;
@@ -252,6 +253,7 @@ function applyResponsiveCamera() {
     camZ = 7.05 + clamp(0.78 - aspect, 0, 0.5) * 2.65;
     if (short) camZ += 0.55;
     lookZ = -0.04;
+    camX = state.pointer.tx - (w <= 320 ? 0.2 : veryNarrow ? 0.15 : w <= 430 ? 0.11 : 0.08);
   } else if (viewport.narrow || w <= 1024) {
     fov = 44.5;
     lookY = 1.32;
@@ -264,7 +266,7 @@ function applyResponsiveCamera() {
 
   camera.fov = fov;
   camera.aspect = w / Math.max(h, 1);
-  camera.position.x = state.pointer.tx;
+  camera.position.x = camX;
   camera.position.y = camY + state.pointer.ty;
   camera.position.z = camZ;
   camera.lookAt(0, lookY, lookZ);
@@ -274,20 +276,71 @@ function applyResponsiveCamera() {
 
 function getSantaSceneScale() {
   updateViewportMetrics();
-  if (viewport.portrait && viewport.h < 700) return 0.74;
-  if (viewport.portrait) return 0.78;
+  if (viewport.portrait && viewport.h < 700) return 0.8;
+  if (viewport.portrait) return 0.84;
   return viewport.narrow ? 0.82 : 0.92;
 }
 
-/** Keep Santa clear of the left side of LAUNCHING SOON. */
+/**
+ * Santa stop pose: desktop keeps left offset for headline clearance;
+ * portrait/narrow viewports use in-frustum X (wide FOV + tall aspect clips far-left).
+ */
 function syncSantaLayout() {
   updateViewportMetrics();
   const w = viewport.w || window.innerWidth;
-  const leftX = w <= 360 ? -2.18 : w <= 430 ? -2.12 : w <= 768 ? -2.08 : -2.2;
-  const stopZ = w <= 430 ? 0.74 : 0.82;
+  const portrait = viewport.portrait;
+
+  let leftX;
+  let stopZ;
+  let enterX;
+  let enterZ;
+
+  if (portrait && w <= 320) {
+    leftX = -1.02;
+    stopZ = 0.98;
+    enterX = -1.95;
+    enterZ = 1.0;
+  } else if (portrait && w <= 430) {
+    leftX = -1.22;
+    stopZ = 0.96;
+    enterX = -2.28;
+    enterZ = 1.02;
+  } else if (portrait && w <= 768) {
+    leftX = -1.34;
+    stopZ = 0.92;
+    enterX = -2.5;
+    enterZ = 1.06;
+  } else if (w <= 768) {
+    leftX = -1.72;
+    stopZ = 0.84;
+    enterX = -3.1;
+    enterZ = 1.12;
+  } else {
+    leftX = w <= 1024 ? -2.06 : -2.18;
+    stopZ = 0.82;
+    enterX = -3.62;
+    enterZ = 1.18;
+  }
+
   santaPos.stop.set(leftX, 0, stopZ);
   santaPos.watch.copy(santaPos.stop);
-  santaPos.enter.set(-3.65, 0, 1.18);
+  santaPos.enter.set(enterX, 0, enterZ);
+}
+
+function isSantaInCameraFrustum() {
+  if (!santaRoot || !camera || !state.santaReady || !santaRoot.visible) return false;
+  santaRoot.updateMatrixWorld(true);
+  _worldA.set(0, 0.95, 0);
+  santaRoot.localToWorld(_worldA);
+  _worldA.project(camera);
+  return (
+    _worldA.x >= -0.98 &&
+    _worldA.x <= 0.98 &&
+    _worldA.y >= -0.98 &&
+    _worldA.y <= 0.98 &&
+    _worldA.z >= -1 &&
+    _worldA.z <= 1
+  );
 }
 
 function mat(color, opts = {}) {
@@ -450,26 +503,41 @@ function paintLaunchEmeraldGlyph(ctx, ch, scaledFont, cx, cy) {
   ctx.strokeText(ch, cx, cy);
 }
 
-function createLaunchLetterMesh(ch, fontPx, planeW, planeH) {
+function createLaunchLetterMesh(ch, fontPx, planeW, planeH, advancePx) {
   const scaledFont = Math.round(fontPx * 1.5);
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
   const m = probe.measureText(ch);
   const inkL = m.actualBoundingBoxLeft ?? scaledFont * 0.08;
   const inkR = m.actualBoundingBoxRight ?? m.width;
-  const inkW = Math.max(Math.ceil(inkL + inkR + 6), 16);
+  const canvasW = Math.max(Math.ceil(advancePx ?? m.width), Math.ceil(inkL + inkR + 8), 24);
   const inkH = Math.max(
     Math.ceil((m.actualBoundingBoxAscent ?? scaledFont * 0.82) + (m.actualBoundingBoxDescent ?? scaledFont * 0.22)),
-    16
+    24
   );
   const canvasEl = document.createElement("canvas");
-  canvasEl.width = inkW;
+  canvasEl.width = canvasW;
   canvasEl.height = inkH;
   const ctx = canvasEl.getContext("2d");
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-  const drawX = 3 - (m.actualBoundingBoxLeft ?? 0);
-  const drawY = (m.actualBoundingBoxAscent ?? scaledFont * 0.82) + 1;
-  paintLaunchEmeraldGlyph(ctx, ch, scaledFont, drawX, drawY);
+  const cx = canvasW / 2;
+  const cy = canvasEl.height / 2;
+  ctx.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const shade = ctx.createLinearGradient(0, cy - scaledFont * 0.42, 0, cy + scaledFont * 0.42);
+  shade.addColorStop(0, "#1f9d6a");
+  shade.addColorStop(0.42, "#0b6b47");
+  shade.addColorStop(1, "#064a32");
+  ctx.fillStyle = shade;
+  ctx.shadowColor = "rgba(6, 74, 50, 0.32)";
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(ch, cx, cy);
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = Math.max(2, scaledFont * 0.018);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+  ctx.strokeText(ch, cx, cy);
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.colorSpace = THREE.SRGBColorSpace;
   tuneTexture(texture);
@@ -486,29 +554,46 @@ function createLaunchLetterMesh(ch, fontPx, planeW, planeH) {
   return mesh;
 }
 
-const LAUNCH_INTRA_TRACK = 0.96;
-const LAUNCH_WORD_SPACE = 1;
+function launchFontForViewport(w) {
+  if (w <= 320) return 94;
+  if (w <= 360) return 100;
+  if (w <= 430) return 108;
+  if (w <= 768) return 122;
+  if (w <= 1024) return 150;
+  return 164;
+}
 
+function measureCanvasPhraseWidth(text, fontPx) {
+  const scaledFont = Math.round(fontPx * 1.5);
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
+  return probe.measureText(text).width;
+}
+
+/** Kerning-aware glyph advances; total width matches full phrase measurement. */
 function measureLaunchGlyphs(fontPx) {
   const scaledFont = Math.round(fontPx * 1.5);
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
   const glyphs = [];
-  let totalPx = 0;
   for (let i = 0; i < LAUNCH_PHRASE.length; i += 1) {
     const ch = LAUNCH_PHRASE[i];
     const before = LAUNCH_PHRASE.slice(0, i);
     const through = LAUNCH_PHRASE.slice(0, i + 1);
-    let advance = probe.measureText(through).width - probe.measureText(before).width;
-    if (ch === " ") {
-      advance *= LAUNCH_WORD_SPACE;
-    } else if (i > 0 && LAUNCH_PHRASE[i - 1] !== " ") {
-      advance *= LAUNCH_INTRA_TRACK;
-    }
+    const advance = probe.measureText(through).width - probe.measureText(before).width;
     glyphs.push({ ch, advance, mesh: ch !== " " });
-    totalPx += advance;
   }
+  const totalPx = probe.measureText(LAUNCH_PHRASE).width;
   return { glyphs, totalPx };
+}
+
+function launchHeadlineMaxWorld(w) {
+  if (w <= 320) return 1.98;
+  if (w <= 360) return 2.06;
+  if (w <= 430) return 2.14;
+  if (w <= 768) return 2.48;
+  if (w <= 1024) return 2.98;
+  return 3.22;
 }
 
 function buildLaunchLetterLayout(launchType) {
@@ -531,17 +616,18 @@ function buildLaunchLetterLayout(launchType) {
       staggerIndex: phraseIndex,
       settled: new THREE.Vector3(cx, ySettled, settledZ),
       inside: insideOrigin.clone(),
-      planeW: g.mesh ? advanceWorld * 0.98 : 0,
+      planeW: g.mesh ? advanceWorld : 0,
       planeH: launchType.planeH,
+      advancePx: g.advance,
     });
   }
   return layouts;
 }
 
 function launchBelowName(nameType, launchType) {
-  const gap = 0.04;
+  const gap = 0.055;
   const y = nameType.settledY - nameType.planeH * 0.5 - launchType.planeH * 0.5 - gap;
-  return { ...launchType, settledY: y, settledZ: 0.62 };
+  return { ...launchType, settledY: y, settledZ: 0.6 };
 }
 
 function getLaunchSequenceStart(timeS) {
@@ -754,33 +840,25 @@ function createGiftBox() {
 function nameTypography() {
   updateViewportMetrics();
   const w = viewport.w || window.innerWidth;
-  if (w <= 320) return { font: 128, planeW: 1.38, planeH: 0.36, settledY: 1.8 };
-  if (w <= 360) return { font: 132, planeW: 1.42, planeH: 0.37, settledY: 1.8 };
-  if (w <= 430) return { font: 138, planeW: 1.48, planeH: 0.38, settledY: 1.81 };
-  if (w <= 768) return { font: 154, planeW: 1.62, planeH: 0.41, settledY: 1.82 };
-  if (w <= 1024) return { font: 176, planeW: 1.76, planeH: 0.44, settledY: 1.84 };
-  return { font: 196, planeW: 1.88, planeH: 0.46, settledY: 1.84 };
+  if (w <= 320) return { font: 134, planeW: 1.44, planeH: 0.38, settledY: 1.82 };
+  if (w <= 360) return { font: 138, planeW: 1.48, planeH: 0.39, settledY: 1.82 };
+  if (w <= 430) return { font: 144, planeW: 1.54, planeH: 0.4, settledY: 1.83 };
+  if (w <= 768) return { font: 160, planeW: 1.68, planeH: 0.43, settledY: 1.84 };
+  if (w <= 1024) return { font: 182, planeW: 1.82, planeH: 0.46, settledY: 1.86 };
+  return { font: 202, planeW: 1.94, planeH: 0.48, settledY: 1.86 };
 }
 
-function launchTypography() {
+function launchTypography(nameType) {
   updateViewportMetrics();
   const w = viewport.w || window.innerWidth;
-  if (w <= 320) {
-    return { font: 92, planeW: 2.02, planeH: 0.46 };
-  }
-  if (w <= 360) {
-    return { font: 98, planeW: 2.12, planeH: 0.48 };
-  }
-  if (w <= 430) {
-    return { font: 106, planeW: 2.22, planeH: 0.5 };
-  }
-  if (w <= 768) {
-    return { font: 120, planeW: 2.58, planeH: 0.54 };
-  }
-  if (w <= 1024) {
-    return { font: 148, planeW: 3.1, planeH: 0.62 };
-  }
-  return { font: 162, planeW: 3.36, planeH: 0.66 };
+  const font = launchFontForViewport(w);
+  const phrasePx = measureCanvasPhraseWidth(LAUNCH_PHRASE, font);
+  const icheyPx = measureCanvasPhraseWidth("ICHEY", nameType.font);
+  const proportionalW = nameType.planeW * (phrasePx / Math.max(icheyPx, 1));
+  const planeW = Math.min(proportionalW, launchHeadlineMaxWorld(w));
+  const planeH =
+    w <= 320 ? 0.44 : w <= 360 ? 0.46 : w <= 430 ? 0.48 : w <= 768 ? 0.52 : w <= 1024 ? 0.6 : 0.64;
+  return { font, planeW, planeH };
 }
 
 function createInteriorReveal(logoTexture) {
@@ -822,12 +900,14 @@ function createInteriorReveal(logoTexture) {
   interiorRoot.add(nameGroup);
 
   launchGroup = new THREE.Group();
-  const launchType = launchBelowName(nameType, launchTypography());
+  const launchType = launchBelowName(nameType, launchTypography(nameType));
   const letterLayouts = buildLaunchLetterLayout(launchType);
   letterLayouts.forEach((spec) => {
     if (!spec.mesh) return;
     const letterRoot = new THREE.Group();
-    letterRoot.add(createLaunchLetterMesh(spec.ch, launchType.font, spec.planeW, spec.planeH));
+    letterRoot.add(
+      createLaunchLetterMesh(spec.ch, launchType.font, spec.planeW, spec.planeH, spec.advancePx)
+    );
     letterRoot.userData = {
       char: spec.ch,
       staggerIndex: spec.staggerIndex,
@@ -2262,6 +2342,10 @@ document.addEventListener("visibilitychange", () => {
 
 if (!prefersReducedMotion) initThree();
 else markFallback("motion");
+
+if (typeof window !== "undefined") {
+  window.__icheySantaFrustum = () => isSantaInCameraFrustum();
+}
 
 initDom();
 

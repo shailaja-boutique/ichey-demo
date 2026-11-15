@@ -21,16 +21,26 @@ const WIDTHS = [320, 360, 390, 430, 768, 1024, 1440];
     await page.waitForFunction(() => document.body.classList.contains("playback-active"), {
       timeout: 50000,
     });
-    await page.waitForTimeout(15000);
+    await page.waitForTimeout(4200);
+    const santaWalk = await page.evaluate(() => ({
+      santaReady: document.body.classList.contains("santa-ready"),
+      choreo: document.body.dataset.choreo || "",
+      inFrustum:
+        typeof window.__icheySantaFrustum === "function" ? window.__icheySantaFrustum() : null,
+    }));
+    await page.waitForTimeout(11000);
     const metrics = await page.evaluate(() => {
       const c = document.getElementById("ichey-canvas");
       return {
         santa: document.body.classList.contains("santa-ready"),
         webgl: document.body.classList.contains("experience-webgl"),
         choreo: document.body.dataset.choreo || "",
+        inFrustum:
+          typeof window.__icheySantaFrustum === "function" ? window.__icheySantaFrustum() : null,
         css: c ? { w: c.clientWidth, h: c.clientHeight, rw: c.width, rh: c.height } : null,
       };
     });
+    Object.assign(metrics, { santaWalk });
     const dpr = metrics.css ? metrics.css.rw / Math.max(metrics.css.w, 1) : 0;
     summary.widths.push({ w, h, dpr: +dpr.toFixed(2), errs, ...metrics });
     await page.screenshot({ path: `_verify-w${w}.png` });
