@@ -460,4 +460,256 @@ a:focus-visible,
     text-align: left;
     width: 100%;
   }
+  
+/* ==========================================
+   ICHEY — Slow-motion floating gift animation
+   ========================================== */
+
+.gift-animation {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.48;
+}
+
+/* Gift box position */
+
+.gift-animation__box {
+  position: absolute;
+  top: 13%;
+  right: 9%;
+  width: 76px;
+  height: 76px;
+  animation: gift-box-float 4s ease-in-out infinite;
+}
+
+/* Box body */
+
+.gift-animation__body {
+  position: absolute;
+  bottom: 0;
+  left: 5px;
+  width: 66px;
+  height: 45px;
+  border-radius: 5px 5px 9px 9px;
+  background: linear-gradient(135deg, #ffbd69, #f07878);
+  box-shadow: 0 8px 18px rgb(70 70 70 / 12%);
+}
+
+/* Box lid */
+
+.gift-animation__lid {
+  position: absolute;
+  top: 23px;
+  left: 0;
+  width: 76px;
+  height: 14px;
+  border-radius: 4px;
+  background: #f47d83;
+  transform-origin: 12% 100%;
+  animation: gift-lid-open 5s ease-in-out infinite;
+}
+
+/* Ribbon */
+
+.gift-animation__ribbon {
+  position: absolute;
+  z-index: 2;
+  bottom: 0;
+  left: 31px;
+  width: 14px;
+  height: 45px;
+  background: #fff0a6;
+}
+
+/* Bow */
+
+.gift-animation__bow {
+  position: absolute;
+  top: 5px;
+  left: 28px;
+  z-index: 3;
+  width: 22px;
+  height: 15px;
+  border: 6px solid #f47d83;
+  border-radius: 70% 70% 40% 70%;
+  transform: rotate(-20deg);
+}
+
+/* Floating objects */
+
+.gift-item {
+  position: absolute;
+  top: 23%;
+  right: 11%;
+  display: block;
+  font-size: 25px;
+  line-height: 1;
+  opacity: 0;
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation: gift-item-fall 9s ease-in infinite;
+}
+
+/* Each object follows a different slow-motion path */
+
+.gift-item--1 {
+  --drift: -180px;
+  --spin: 180deg;
+  animation-delay: 0s;
+}
+
+.gift-item--2 {
+  --drift: 110px;
+  --spin: -220deg;
+  animation-delay: 1.2s;
+}
+
+.gift-item--3 {
+  --drift: -100px;
+  --spin: 150deg;
+  animation-delay: 2.4s;
+}
+
+.gift-item--4 {
+  --drift: 170px;
+  --spin: -180deg;
+  animation-delay: 3.6s;
+}
+
+.gift-item--5 {
+  --drift: -230px;
+  --spin: 240deg;
+  animation-delay: 4.8s;
+}
+
+.gift-item--6 {
+  --drift: 60px;
+  --spin: -160deg;
+  animation-delay: 5.5s;
+}
+
+.gift-item--7 {
+  --drift: -140px;
+  --spin: 200deg;
+  animation-delay: 6.2s;
+}
+
+.gift-item--8 {
+  --drift: 220px;
+  --spin: -260deg;
+  animation-delay: 7s;
+}
+
+.gift-item--9 {
+  --drift: -60px;
+  --spin: 180deg;
+  animation-delay: 7.8s;
+}
+
+.gift-item--10 {
+  --drift: 140px;
+  --spin: -200deg;
+  animation-delay: 8.4s;
+}
+
+/* Gift box gently floats */
+
+@keyframes gift-box-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+/* Lid opens and closes gently */
+
+@keyframes gift-lid-open {
+  0%, 15%, 100% {
+    transform: rotate(0deg) translateY(0);
+  }
+
+  35%, 75% {
+    transform: rotate(-24deg) translateY(-9px);
+  }
+}
+
+/* Objects emerge, drift, rotate and fall */
+
+@keyframes gift-item-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.65) rotate(0deg);
+  }
+
+  10% {
+    opacity: 0.9;
+  }
+
+  35% {
+    opacity: 0.85;
+    transform: translate3d(
+      calc(var(--drift) * 0.45),
+      25vh,
+      0
+    ) scale(1) rotate(calc(var(--spin) * 0.35));
+  }
+
+  70% {
+    opacity: 0.75;
+    transform: translate3d(
+      var(--drift),
+      55vh,
+      0
+    ) scale(0.9) rotate(calc(var(--spin) * 0.75));
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(
+      calc(var(--drift) * 0.7),
+      80vh,
+      0
+    ) scale(0.7) rotate(var(--spin));
+  }
+}
+
+/* Keep the animation subtle on small screens */
+
+@media (max-width: 600px) {
+  .gift-animation {
+    opacity: 0.25;
+  }
+
+  .gift-animation__box {
+    top: 10%;
+    right: 5%;
+    transform: scale(0.75);
+    transform-origin: top right;
+  }
+
+  .gift-item {
+    font-size: 20px;
+  }
+}
+
+/* Respect visitors who prefer reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  .gift-animation__box,
+  .gift-animation__lid,
+  .gift-item {
+    animation: none !important;
+  }
+
+  .gift-animation {
+    opacity: 0.12;
+  }
+}
+
 }
