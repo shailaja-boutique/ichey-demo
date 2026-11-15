@@ -21,12 +21,13 @@ const WIDTHS = [320, 360, 390, 430, 768, 1024, 1440];
     await page.waitForFunction(() => document.body.classList.contains("playback-active"), {
       timeout: 50000,
     });
-    await page.waitForTimeout(12000);
+    await page.waitForTimeout(15000);
     const metrics = await page.evaluate(() => {
       const c = document.getElementById("ichey-canvas");
       return {
         santa: document.body.classList.contains("santa-ready"),
         webgl: document.body.classList.contains("experience-webgl"),
+        choreo: document.body.dataset.choreo || "",
         css: c ? { w: c.clientWidth, h: c.clientHeight, rw: c.width, rh: c.height } : null,
       };
     });

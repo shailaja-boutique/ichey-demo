@@ -43,10 +43,16 @@ const FLOAT_ORBIT = {
   rz: 0.36,
 };
 
+const LAUNCH_PHRASE = "LAUNCHING SOON";
+const LAUNCH_STAGGER = 0.13;
+const LAUNCH_LETTER_DURATION = 0.58;
+
 const REVEAL = {
   logo: 1.12,
   name: 0.95,
-  launch: 1.42,
+  get launch() {
+    return (LAUNCH_PHRASE.length - 1) * LAUNCH_STAGGER + LAUNCH_LETTER_DURATION + 0.08;
+  },
   phaseGap: 0.18,
   gifts: 2.85,
 };
@@ -70,10 +76,10 @@ const BRAND_SAFE = {
   nameY0: 1.45,
   nameY1: 2.12,
   nameX: 0.78,
-  launchY0: 0.58,
-  launchY1: 1.58,
-  launchX: 1.38,
-  launchRightX: 0.52,
+  launchY0: 0.5,
+  launchY1: 1.48,
+  launchX: 1.22,
+  launchRightX: 0.58,
   logoY0: 2.02,
   logoX: 0.62,
   frontZ: 0.42,
@@ -87,7 +93,9 @@ const TIMELINE = {
   nameStart: 3.15,
   nameDuration: 0.82,
   launchStart: 4.1,
-  launchDuration: 1.45,
+  get launchDuration() {
+    return REVEAL.launch;
+  },
   giftsStart: 5.65,
   giftsDuration: 2.15,
   settleStart: 7.2,
@@ -140,13 +148,15 @@ let santaLegsFrozen = false;
 const santaBones = {};
 const santaRestPose = new Map();
 const santaPos = {
-  enter: new THREE.Vector3(-3.55, 0, 1.38),
-  stop: new THREE.Vector3(-1.42, 0, 1.06),
-  watch: new THREE.Vector3(-1.42, 0, 1.06),
+  enter: new THREE.Vector3(-3.62, 0, 1.22),
+  stop: new THREE.Vector3(-2.08, 0, 0.82),
+  watch: new THREE.Vector3(-2.08, 0, 0.82),
 };
 const SANTA_FACE_BOX = 1.12;
 const _worldA = new THREE.Vector3();
 const _worldB = new THREE.Vector3();
+const _launchAim = new THREE.Vector3();
+const _launchDir = new THREE.Vector3();
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 const easeOutCubic = (t) => 1 - (1 - t) ** 3;
@@ -259,13 +269,25 @@ function applyResponsiveCamera() {
   camera.position.z = camZ;
   camera.lookAt(0, lookY, lookZ);
   camera.updateProjectionMatrix();
+  syncSantaLayout();
 }
 
 function getSantaSceneScale() {
   updateViewportMetrics();
-  if (viewport.portrait && viewport.h < 700) return 0.76;
-  if (viewport.portrait) return 0.8;
-  return viewport.narrow ? 0.86 : 0.96;
+  if (viewport.portrait && viewport.h < 700) return 0.74;
+  if (viewport.portrait) return 0.78;
+  return viewport.narrow ? 0.82 : 0.92;
+}
+
+/** Keep Santa clear of the left side of LAUNCHING SOON. */
+function syncSantaLayout() {
+  updateViewportMetrics();
+  const w = viewport.w || window.innerWidth;
+  const leftX = w <= 360 ? -2.18 : w <= 430 ? -2.12 : w <= 768 ? -2.08 : -2.2;
+  const stopZ = w <= 430 ? 0.74 : 0.82;
+  santaPos.stop.set(leftX, 0, stopZ);
+  santaPos.watch.copy(santaPos.stop);
+  santaPos.enter.set(-3.65, 0, 1.18);
 }
 
 function mat(color, opts = {}) {
@@ -409,6 +431,203 @@ function createLabelPlane(text, fontPx, color, planeW, planeH, style = "solid", 
   return mesh;
 }
 
+function paintLaunchEmeraldGlyph(ctx, ch, scaledFont, cx, cy) {
+  ctx.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  const shade = ctx.createLinearGradient(0, cy - scaledFont * 0.62, 0, cy + scaledFont * 0.18);
+  shade.addColorStop(0, "#1f9d6a");
+  shade.addColorStop(0.42, "#0b6b47");
+  shade.addColorStop(1, "#064a32");
+  ctx.fillStyle = shade;
+  ctx.shadowColor = "rgba(6, 74, 50, 0.32)";
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(ch, cx, cy);
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = Math.max(2, scaledFont * 0.018);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+  ctx.strokeText(ch, cx, cy);
+}
+
+function createLaunchLetterMesh(ch, fontPx, planeW, planeH) {
+  const scaledFont = Math.round(fontPx * 1.5);
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
+  const m = probe.measureText(ch);
+  const inkL = m.actualBoundingBoxLeft ?? scaledFont * 0.08;
+  const inkR = m.actualBoundingBoxRight ?? m.width;
+  const inkW = Math.max(Math.ceil(inkL + inkR + 6), 16);
+  const inkH = Math.max(
+    Math.ceil((m.actualBoundingBoxAscent ?? scaledFont * 0.82) + (m.actualBoundingBoxDescent ?? scaledFont * 0.22)),
+    16
+  );
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = inkW;
+  canvasEl.height = inkH;
+  const ctx = canvasEl.getContext("2d");
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  const drawX = 3 - (m.actualBoundingBoxLeft ?? 0);
+  const drawY = (m.actualBoundingBoxAscent ?? scaledFont * 0.82) + 1;
+  paintLaunchEmeraldGlyph(ctx, ch, scaledFont, drawX, drawY);
+  const texture = new THREE.CanvasTexture(canvasEl);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  tuneTexture(texture);
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: true,
+    alphaTest: 0.06,
+    opacity: 0,
+  });
+  applyOpeningClip(material);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(planeW, planeH), material);
+  mesh.renderOrder = 8;
+  return mesh;
+}
+
+const LAUNCH_INTRA_TRACK = 0.96;
+const LAUNCH_WORD_SPACE = 1;
+
+function measureLaunchGlyphs(fontPx) {
+  const scaledFont = Math.round(fontPx * 1.5);
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
+  const glyphs = [];
+  let totalPx = 0;
+  for (let i = 0; i < LAUNCH_PHRASE.length; i += 1) {
+    const ch = LAUNCH_PHRASE[i];
+    const before = LAUNCH_PHRASE.slice(0, i);
+    const through = LAUNCH_PHRASE.slice(0, i + 1);
+    let advance = probe.measureText(through).width - probe.measureText(before).width;
+    if (ch === " ") {
+      advance *= LAUNCH_WORD_SPACE;
+    } else if (i > 0 && LAUNCH_PHRASE[i - 1] !== " ") {
+      advance *= LAUNCH_INTRA_TRACK;
+    }
+    glyphs.push({ ch, advance, mesh: ch !== " " });
+    totalPx += advance;
+  }
+  return { glyphs, totalPx };
+}
+
+function buildLaunchLetterLayout(launchType) {
+  const { glyphs, totalPx } = measureLaunchGlyphs(launchType.font);
+  const worldW = launchType.planeW;
+  const worldScale = worldW / Math.max(totalPx, 1);
+  const ySettled = launchType.settledY;
+  const insideOrigin = new THREE.Vector3(0, 0.36, -0.05);
+  const settledZ = launchType.settledZ ?? 0.58;
+  let leftPx = 0;
+  const layouts = [];
+  for (let phraseIndex = 0; phraseIndex < glyphs.length; phraseIndex += 1) {
+    const g = glyphs[phraseIndex];
+    const advanceWorld = g.advance * worldScale;
+    const cx = (leftPx + g.advance * 0.5) * worldScale - worldW / 2;
+    leftPx += g.advance;
+    layouts.push({
+      ch: g.ch,
+      mesh: g.mesh,
+      staggerIndex: phraseIndex,
+      settled: new THREE.Vector3(cx, ySettled, settledZ),
+      inside: insideOrigin.clone(),
+      planeW: g.mesh ? advanceWorld * 0.98 : 0,
+      planeH: launchType.planeH,
+    });
+  }
+  return layouts;
+}
+
+function launchBelowName(nameType, launchType) {
+  const gap = 0.04;
+  const y = nameType.settledY - nameType.planeH * 0.5 - launchType.planeH * 0.5 - gap;
+  return { ...launchType, settledY: y, settledZ: 0.62 };
+}
+
+function getLaunchSequenceStart(timeS) {
+  const off = getBrandOffset();
+  if (state.santaReady) return getChoreoTimes().launchStart;
+  return TIMELINE.launchStart + off;
+}
+
+function getLaunchLetterT(timeS, staggerIndex) {
+  const start = getLaunchSequenceStart(timeS) + staggerIndex * LAUNCH_STAGGER;
+  if (timeS < start) return 0;
+  return clamp((timeS - start) / LAUNCH_LETTER_DURATION, 0, 1);
+}
+
+function getLaunchSequenceProgress(timeS) {
+  const launchStart = getLaunchSequenceStart(timeS);
+  if (timeS < launchStart) return 0;
+  if (state.santaReady) {
+    const c = getChoreoTimes();
+    if (timeS >= c.launchEnd) return 1;
+  } else if (timeS >= launchStart + REVEAL.launch) return 1;
+  const lastIndex = LAUNCH_PHRASE.length - 1;
+  const lastStart = launchStart + lastIndex * LAUNCH_STAGGER;
+  if (timeS >= lastStart + LAUNCH_LETTER_DURATION) return 1;
+  return clamp((timeS - launchStart) / REVEAL.launch, 0, 0.995);
+}
+
+function launchLettersFullySettled(timeS) {
+  return getLaunchLetterT(timeS, LAUNCH_PHRASE.length - 1) >= 1;
+}
+
+function resetLaunchLetters() {
+  if (!launchGroup) return;
+  launchGroup.visible = false;
+  launchGroup.position.set(0, 0, 0);
+  launchGroup.rotation.set(0, 0, 0);
+  launchGroup.scale.setScalar(1);
+  launchGroup.traverse((o) => {
+    if (o.isGroup && o !== launchGroup && o.userData?.settled) {
+      o.visible = false;
+      o.position.copy(o.userData.inside);
+      o.rotation.set(0.32, 0, 0);
+      o.scale.setScalar(o.userData.scaleFrom ?? 0.06);
+      o.traverse((m) => {
+        if (m.isMesh && m.material) m.material.opacity = 0;
+      });
+    }
+  });
+}
+
+function updateLaunchLetterReveal(timeS) {
+  if (!launchGroup) return 0;
+  let anyVisible = false;
+  let maxT = 0;
+  launchGroup.children.forEach((letterGroup) => {
+    const { staggerIndex, inside, settled, scaleFrom, scaleTo } = letterGroup.userData;
+    if (staggerIndex === undefined) return;
+    const t = getLaunchLetterT(timeS, staggerIndex);
+    maxT = Math.max(maxT, t);
+    const mesh = letterGroup.children.find((c) => c.isMesh);
+    if (t <= 0) {
+      letterGroup.visible = false;
+      letterGroup.position.copy(inside);
+      letterGroup.rotation.x = 0.32;
+      letterGroup.scale.setScalar(scaleFrom ?? 0.06);
+      if (mesh?.material) mesh.material.opacity = 0;
+      setGroupClipped(letterGroup, true);
+      return;
+    }
+    anyVisible = true;
+    letterGroup.visible = true;
+    const rise = easeOutCubic(t);
+    letterGroup.position.lerpVectors(inside, settled, rise);
+    const pop = easeOutBack(t);
+    letterGroup.scale.setScalar(lerp(scaleFrom ?? 0.06, scaleTo ?? 1, pop));
+    letterGroup.rotation.x = lerp(0.28, 0, easeOutCubic(t));
+    if (mesh?.material) {
+      mesh.material.opacity = clamp(rise * 1.05, 0, 1);
+    }
+    setGroupClipped(letterGroup, !emergedPastRim(letterGroup, 0.02) && t < 0.98);
+  });
+  launchGroup.visible = anyVisible || launchLettersFullySettled(timeS);
+  faceCamera(launchGroup);
+  return maxT;
+}
+
 function faceCamera(group) {
   if (!group || !camera) return;
   group.quaternion.copy(camera.quaternion);
@@ -532,6 +751,38 @@ function createGiftBox() {
   scene.add(boxRoot);
 }
 
+function nameTypography() {
+  updateViewportMetrics();
+  const w = viewport.w || window.innerWidth;
+  if (w <= 320) return { font: 128, planeW: 1.38, planeH: 0.36, settledY: 1.8 };
+  if (w <= 360) return { font: 132, planeW: 1.42, planeH: 0.37, settledY: 1.8 };
+  if (w <= 430) return { font: 138, planeW: 1.48, planeH: 0.38, settledY: 1.81 };
+  if (w <= 768) return { font: 154, planeW: 1.62, planeH: 0.41, settledY: 1.82 };
+  if (w <= 1024) return { font: 176, planeW: 1.76, planeH: 0.44, settledY: 1.84 };
+  return { font: 196, planeW: 1.88, planeH: 0.46, settledY: 1.84 };
+}
+
+function launchTypography() {
+  updateViewportMetrics();
+  const w = viewport.w || window.innerWidth;
+  if (w <= 320) {
+    return { font: 92, planeW: 2.02, planeH: 0.46 };
+  }
+  if (w <= 360) {
+    return { font: 98, planeW: 2.12, planeH: 0.48 };
+  }
+  if (w <= 430) {
+    return { font: 106, planeW: 2.22, planeH: 0.5 };
+  }
+  if (w <= 768) {
+    return { font: 120, planeW: 2.58, planeH: 0.54 };
+  }
+  if (w <= 1024) {
+    return { font: 148, planeW: 3.1, planeH: 0.62 };
+  }
+  return { font: 162, planeW: 3.36, planeH: 0.66 };
+}
+
 function createInteriorReveal(logoTexture) {
   // Clip fragments below the box opening (y < OPENING_Y in box-local space).
   openingClip = [new THREE.Plane(new THREE.Vector3(0, 1, 0), -OPENING_Y)];
@@ -554,48 +805,51 @@ function createInteriorReveal(logoTexture) {
   interiorRoot.add(logoGroup);
 
   nameGroup = new THREE.Group();
+  const nameType = nameTypography();
   const nameMesh = createLabelPlane(
     "ICHEY",
-    isNarrow ? 118 : 178,
+    nameType.font,
     "#2a1e35",
-    isNarrow ? 1.28 : 1.62,
-    isNarrow ? 0.32 : 0.38
+    nameType.planeW,
+    nameType.planeH
   );
   nameGroup.add(nameMesh);
   nameGroup.visible = false;
   nameGroup.userData = {
     inside: new THREE.Vector3(0, 0.4, -0.05),
-    settled: new THREE.Vector3(0, 1.76, 0.58),
+    settled: new THREE.Vector3(0, nameType.settledY, 0.58),
   };
   interiorRoot.add(nameGroup);
 
   launchGroup = new THREE.Group();
-  const launchMesh = createLabelPlane(
-    "LAUNCHING SOON",
-    isNarrow ? 80 : 138,
-    "#0b6b47",
-    isNarrow ? 2.02 : 3.05,
-    isNarrow ? 0.44 : 0.62,
-    "launch-emerald",
-    true
-  );
-  launchGroup.add(launchMesh);
+  const launchType = launchBelowName(nameType, launchTypography());
+  const letterLayouts = buildLaunchLetterLayout(launchType);
+  letterLayouts.forEach((spec) => {
+    if (!spec.mesh) return;
+    const letterRoot = new THREE.Group();
+    letterRoot.add(createLaunchLetterMesh(spec.ch, launchType.font, spec.planeW, spec.planeH));
+    letterRoot.userData = {
+      char: spec.ch,
+      staggerIndex: spec.staggerIndex,
+      inside: spec.inside,
+      settled: spec.settled,
+      scaleFrom: 0.06,
+      scaleTo: 1,
+    };
+    letterRoot.visible = false;
+    letterRoot.position.copy(spec.inside);
+    letterRoot.scale.setScalar(0.06);
+    clipObjectTree(letterRoot);
+    launchGroup.add(letterRoot);
+  });
   launchGroup.visible = false;
-  launchGroup.userData = {
-    inside: new THREE.Vector3(0, 0.38, -0.05),
-    settled: new THREE.Vector3(0, 1.08, 0.52),
-    scaleFrom: 0.04,
-    scalePeak: isNarrow ? 0.98 : 1.08,
-    scaleTo: isNarrow ? 0.86 : 0.94,
-  };
   interiorRoot.add(launchGroup);
 
   logoGroup.position.copy(logoGroup.userData.inside);
   logoGroup.scale.setScalar(0.04);
   nameGroup.position.copy(nameGroup.userData.inside);
   nameGroup.scale.setScalar(0.04);
-  launchGroup.position.copy(launchGroup.userData.inside);
-  launchGroup.scale.setScalar(launchGroup.userData.scaleFrom);
+  resetLaunchLetters();
 }
 
 /* Gift builders — premium product-style meshes */
@@ -922,7 +1176,8 @@ function updateSceneDecor(timeS) {
 
   const orbitT0 = c.giftsStart;
   const orbitSpan = REVEAL.gifts;
-  const orbitU = timeS < orbitT0 ? 0 : clamp((timeS - orbitT0) / orbitSpan, 0, 1);
+  const orbitU =
+    !giftsPhaseGate(timeS) ? 0 : timeS < orbitT0 ? 0 : clamp((timeS - orbitT0) / orbitSpan, 0, 1);
   const spin = easeInOutCubic(orbitU) * Math.PI * 2;
   const settled = orbitU >= 0.97;
 
@@ -1165,9 +1420,7 @@ function getChoreoReveal(timeS) {
         ? 0
         : easeOutCubic(clamp((timeS - c.nameStart) / REVEAL.name, 0, 1)),
     launch:
-      timeS < c.launchStart || timeS < c.nameEnd
-        ? 0
-        : easeOutBack(clamp((timeS - c.launchStart) / REVEAL.launch, 0, 1)),
+      timeS < c.launchStart || timeS < c.nameEnd ? 0 : getLaunchSequenceProgress(timeS),
     gifts:
       timeS < c.giftsStart
         ? 0
@@ -1219,6 +1472,15 @@ function restSantaRightArm() {
   }
   if (santaBones.forearm_R) santaBones.forearm_R.rotation.x += 0.12;
   if (santaBones.hand_R) santaBones.hand_R.rotation.x += 0.06;
+}
+
+function restSantaLeftArm() {
+  if (santaBones.upperarm_L) {
+    santaBones.upperarm_L.rotation.x += 0.1;
+    santaBones.upperarm_L.rotation.z += 0.08;
+  }
+  if (santaBones.forearm_L) santaBones.forearm_L.rotation.x += 0.07;
+  if (santaBones.hand_L) santaBones.hand_L.rotation.x += 0.04;
 }
 
 /** Character LEFT arm opens lid (upperarm_L / hand_L). Right arm stays at rest. */
@@ -1277,6 +1539,111 @@ function applySantaLeftPresentPose(kind, u) {
   santaModel.traverse((o) => {
     if (o.isSkinnedMesh) o.skeleton?.update();
   });
+}
+
+function getLaunchHeadlineWorldTarget(out) {
+  out.set(0, 0.92, 0.58);
+  if (interiorRoot) {
+    interiorRoot.localToWorld(out);
+    return out;
+  }
+  if (boxRoot) {
+    out.set(0, 1.45, 0.42);
+    boxRoot.localToWorld(out);
+  }
+  return out;
+}
+
+/** World position at the center of rising letter “L” (touch target for Santa’s hand). */
+function getLaunchLetterLWorld(out) {
+  if (!launchGroup || !interiorRoot) return getLaunchHeadlineWorldTarget(out);
+  const lGroup = launchGroup.children.find((g) => g.userData?.char === "L");
+  if (!lGroup) return getLaunchHeadlineWorldTarget(out);
+  if (lGroup.visible) lGroup.getWorldPosition(out);
+  else {
+    out.copy(lGroup.userData.settled);
+    interiorRoot.localToWorld(out);
+  }
+  out.x += 0.06;
+  out.y -= 0.03;
+  return out;
+}
+
+function addBoneAimAtWorld(bone, targetWorld, strength) {
+  if (!bone || strength <= 0) return;
+  bone.getWorldPosition(_worldA);
+  _launchDir.subVectors(targetWorld, _worldA);
+  const len = _launchDir.length();
+  if (len < 0.015) return;
+  _launchDir.multiplyScalar(1 / len);
+  bone.rotation.x += _launchDir.y * strength;
+  bone.rotation.y += _launchDir.x * strength * 1.15;
+  bone.rotation.z -= _launchDir.z * strength * 0.35;
+}
+
+/**
+ * Right hand presents toward LAUNCHING SOON (Santa left of box).
+ * Extends from rest pose with positive rotations so palm faces the headline, not the back of the hand.
+ */
+function applySantaRightPointAtLaunch(u) {
+  if (!santaModel) return;
+  resetSantaBones();
+  restSantaLeftArm();
+  const t = easeInOutCubic(clamp(u, 0, 1));
+
+  if (santaBones.spine) santaBones.spine.rotation.x += 0.04 + t * 0.1;
+  if (santaBones.spine1) santaBones.spine1.rotation.x += t * 0.06;
+  if (santaBones.neck) {
+    santaBones.neck.rotation.x -= t * 0.16;
+    santaBones.neck.rotation.y += t * 0.12;
+  }
+  if (santaBones.head) santaBones.head.rotation.y += t * 0.08;
+
+  if (santaBones.shoulder_R) {
+    santaBones.shoulder_R.rotation.x += t * 0.06;
+    santaBones.shoulder_R.rotation.y -= t * 0.12;
+  }
+  if (santaBones.upperarm_R) {
+    santaBones.upperarm_R.rotation.x += 0.14 + t * 1.12;
+    santaBones.upperarm_R.rotation.y += 0.1 - t * 0.92;
+    santaBones.upperarm_R.rotation.z += 0.22 + t * 0.1;
+  }
+  if (santaBones.forearm_R) {
+    santaBones.forearm_R.rotation.x += 0.12 + t * 1.05;
+    santaBones.forearm_R.rotation.y += t * 0.14;
+  }
+  if (santaBones.hand_R) {
+    santaBones.hand_R.rotation.x += 0.06 - t * 0.38;
+    santaBones.hand_R.rotation.y += t * 0.62;
+    santaBones.hand_R.rotation.z += t * 0.32;
+  }
+
+  if (t > 0.08 && santaRoot) {
+    santaModel.updateMatrixWorld(true);
+    getLaunchLetterLWorld(_launchAim);
+    const aim = t * 1.02;
+    addBoneAimAtWorld(santaBones.upperarm_R, _launchAim, aim * 0.58);
+    addBoneAimAtWorld(santaBones.forearm_R, _launchAim, aim * 0.95);
+    addBoneAimAtWorld(santaBones.hand_R, _launchAim, aim * 1.08);
+  }
+
+  santaModel.traverse((o) => {
+    if (o.isSkinnedMesh) o.skeleton?.update();
+  });
+}
+
+/** Arm toward LAUNCHING SOON while letters reveal (Santa stands left of the box). */
+function getSantaLaunchPointT(timeS) {
+  if (!state.santaReady) return 0;
+  const c = getChoreoTimes();
+  if (timeS < c.launchStart) return 0;
+  const rise = c.launchStart + 0.4;
+  if (timeS < rise) return easeOutCubic((timeS - c.launchStart) / (rise - c.launchStart));
+  const holdEnd = c.launchEnd + 0.6;
+  if (timeS <= holdEnd) return 1;
+  const fadeEnd = holdEnd + 0.5;
+  if (timeS < fadeEnd) return 1 - easeInOutCubic((timeS - holdEnd) / (fadeEnd - holdEnd));
+  return 0;
 }
 
 function getSantaOpenT(timeS) {
@@ -1390,11 +1757,19 @@ function updateSanta(timeS) {
   freezeSantaLegs();
 
   santaRoot.position.copy(santaPos.stop);
-  santaRoot.rotation.y = SANTA_FACE_BOX;
 
-  applySantaStandPose();
+  const pointAtLaunch = getSantaLaunchPointT(timeS);
+  if (pointAtLaunch > 0.01) {
+    applySantaRightPointAtLaunch(pointAtLaunch);
+    santaRoot.rotation.y = lerp(SANTA_FACE_BOX, SANTA_FACE_BOX + 0.05, pointAtLaunch);
+  } else {
+    applySantaStandPose();
+    santaRoot.rotation.y = SANTA_FACE_BOX;
+  }
   const u = phase === "STOPPED" ? easeOutCubic((timeS - c.walkEnd) / SANTA.stopBlend) : 1;
-  if (u < 0.7) santaRoot.rotation.y = lerp(SANTA_FACE_BOX, SANTA_FACE_BOX + 0.03, u / 0.7);
+  if (pointAtLaunch < 0.01 && u < 0.7) {
+    santaRoot.rotation.y = lerp(SANTA_FACE_BOX, SANTA_FACE_BOX + 0.03, u / 0.7);
+  }
   santaRoot.position.y = Math.sin(timeS * 0.85) * 0.003;
 }
 
@@ -1424,7 +1799,7 @@ function getPhaseT(t) {
     open: easeInOutCubic(clamp((t - TIMELINE.openStart - off) / openDur, 0, 1)),
     logo: easeOutCubic(clamp((t - TIMELINE.logoStart - off) / TIMELINE.logoDuration, 0, 1)),
     name: easeOutCubic(clamp((t - TIMELINE.nameStart - off) / TIMELINE.nameDuration, 0, 1)),
-    launch: easeOutBack(clamp((t - TIMELINE.launchStart - off) / TIMELINE.launchDuration, 0, 1)),
+    launch: getLaunchSequenceProgress(t),
     gifts: easeOutCubic(clamp((t - TIMELINE.giftsStart - off) / TIMELINE.giftsDuration, 0, 1)),
     settle: easeOutCubic(clamp((t - TIMELINE.settleStart - off) / 1.2, 0, 1)),
   };
@@ -1438,12 +1813,13 @@ function startPlayback() {
   body.classList.add("playback-active");
 }
 
-function giftsPhaseGate(timeS, launchT) {
+function giftsPhaseGate(timeS) {
   if (state.santaReady) {
     const c = getChoreoTimes();
-    return timeS >= c.giftsStart && launchT >= 0.96;
+    return timeS >= c.giftsStart && launchLettersFullySettled(timeS);
   }
-  return timeS >= TIMELINE.giftsStart + getBrandOffset() && launchT >= 0.92;
+  const off = getBrandOffset();
+  return timeS >= TIMELINE.giftsStart + off && launchLettersFullySettled(timeS);
 }
 
 function updateGifts(open, launchT, giftsT, timeS) {
@@ -1514,24 +1890,10 @@ function updateInteriorReveal(phase, timeS) {
   }
 
   if (!launchAllowed || launch <= 0) {
-    launchGroup.visible = false;
-    launchGroup.position.copy(launchGroup.userData.inside);
-    launchGroup.scale.setScalar(launchGroup.userData.scaleFrom);
-    setGroupClipped(launchGroup, true);
+    resetLaunchLetters();
   } else {
-    launchGroup.visible = true;
-    const u = launchGroup.userData;
-    const rise = easeOutCubic(launch);
-    launchGroup.position.lerpVectors(u.inside, u.settled, rise);
-    const dramatic = easeOutBack(launch);
-    let scaleT = lerp(u.scaleFrom, u.scalePeak, dramatic);
-    if (launch > 0.72) scaleT = lerp(scaleT, u.scaleTo, (launch - 0.72) / 0.28);
-    launchGroup.scale.setScalar(scaleT);
-    launchGroup.rotation.x = lerp(0.32, 0, easeOutCubic(launch));
-    faceCamera(launchGroup);
-    launchGroup.position.y += Math.sin(timeS * 1.35) * 0.004 * (1 - launch);
-    setGroupClipped(launchGroup, !emergedPastRim(launchGroup, 0.02) && launch < 0.96);
-    if (rimGlow) rimGlow.intensity = 0.45 + launch * 1.05;
+    updateLaunchLetterReveal(timeS);
+    if (rimGlow) rimGlow.intensity = 0.45 + getLaunchSequenceProgress(timeS) * 1.05;
   }
 }
 
