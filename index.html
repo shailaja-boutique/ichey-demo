@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -11,151 +12,219 @@
     <link rel="icon" type="image/png" href="ichey-logo.png" />
     <link rel="stylesheet" href="styles.css" />
   </head>
+
   <body>
-  <div class="page-background" aria-hidden="true">
-    <div class="page-background__glow"></div>
-    <svg class="page-background__arc page-background__arc--one" viewBox="0 0 200 200" fill="none">
-      <circle cx="100" cy="100" r="90" stroke="currentColor" stroke-width="1" />
-    </svg>
-    <svg class="page-background__arc page-background__arc--two" viewBox="0 0 200 200" fill="none">
-      <circle cx="100" cy="100" r="70" stroke="currentColor" stroke-width="1" />
-    </svg>
-    <span class="page-background__leaf page-background__leaf--one"></span>
-    <span class="page-background__leaf page-background__leaf--two"></span>
-    <span class="page-background__leaf page-background__leaf--three"></span>
-    <div class="page-background__hills">
+    <div class="page-background" aria-hidden="true">
+      <div class="page-background__glow"></div>
+
       <svg
-        class="hill hill--back"
-        viewBox="0 0 1440 320"
-        preserveAspectRatio="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
+        class="page-background__arc page-background__arc--one"
+        viewBox="0 0 200 200"
+        fill="none"
       >
-        <path
-          fill="currentColor"
-          d="M0,192L80,186.7C160,181,320,171,480,165.3C640,160,800,160,960,154.7C1120,149,1280,139,1360,133.3L1440,128L1440,320L1360,320C1280,320,1120,320,960,320C800,320,640,320,480,320C320,320,160,320,80,320L0,320Z"
+        <circle
+          cx="100"
+          cy="100"
+          r="90"
+          stroke="currentColor"
+          stroke-width="1"
         />
       </svg>
+
       <svg
-        class="hill hill--front"
-        viewBox="0 0 1440 280"
-        preserveAspectRatio="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
+        class="page-background__arc page-background__arc--two"
+        viewBox="0 0 200 200"
+        fill="none"
       >
-        <path
-          fill="currentColor"
-          d="M0,224L60,213.3C120,203,240,181,360,176C480,171,600,181,720,186.7C840,192,960,192,1080,181.3C1200,171,1320,149,1380,138.7L1440,128L1440,280L1380,280C1320,280,1200,280,1080,280C960,280,840,280,720,280C600,280,480,280,360,280C240,280,120,280,60,280L0,280Z"
+        <circle
+          cx="100"
+          cy="100"
+          r="70"
+          stroke="currentColor"
+          stroke-width="1"
         />
       </svg>
-      <div class="hill hill--base"></div>
+
+      <span class="page-background__leaf page-background__leaf--one"></span>
+      <span class="page-background__leaf page-background__leaf--two"></span>
+      <span class="page-background__leaf page-background__leaf--three"></span>
+
+      <div class="page-background__hills">
+        <svg
+          class="hill hill--back"
+          viewBox="0 0 1440 320"
+          preserveAspectRatio="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <path
+            fill="currentColor"
+            d="M0,192L80,186.7C160,181,320,171,480,165.3C640,160,800,160,960,154.7C1120,149,1280,139,1360,133.3L1440,128L1440,320L1360,320C1280,320,1120,320,960,320C800,320,640,320,480,320C320,320,160,320,80,320L0,320Z"
+          />
+        </svg>
+
+        <svg
+          class="hill hill--front"
+          viewBox="0 0 1440 280"
+          preserveAspectRatio="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <path
+            fill="currentColor"
+            d="M0,224L60,213.3C120,203,240,181,360,176C480,171,600,181,720,186.7C840,192,960,192,1080,181.3C1200,171,1320,149,1380,138.7L1440,128L1440,280L1380,280C1320,280,1200,280,1080,280C960,280,840,280,720,280C600,280,480,280,360,280C240,280,120,280,60,280L0,280Z"
+          />
+        </svg>
+
+        <div class="hill hill--base"></div>
+      </div>
     </div>
-  </div>
 
-  <a class="skip-link" href="#main">Skip to main content</a>
+    <a class="skip-link" href="#main">Skip to main content</a>
 
-  <header class="site-header">
-    <a class="brand-lockup brand-lockup--header" href="#main" aria-label="ICHEY home">
-      <img
-        class="brand-lockup__logo"
-        src="assets/images/ichey-logo.png"
-        width="48"
-        height="48"
-        alt="ICHEY logo"
-        decoding="async"
-      />
-      <span class="brand-lockup__wordmark">ICHEY</span>
-    </a>
-    <p class="site-header__tagline">Connect <span aria-hidden="true">•</span> Share <span aria-hidden="true">•</span> Grow</p>
-  </header>
-
-  <main id="main" class="site-main">
-    <section class="hero" aria-labelledby="hero-heading">
-      <div class="hero__brand">
+    <header class="site-header">
+      <a
+        class="brand-lockup brand-lockup--header"
+        href="#main"
+        aria-label="ICHEY home"
+      >
+        <!-- Fixed: logo is stored in the repository root -->
         <img
-          class="hero__logo"
+          class="brand-lockup__logo"
           src="ichey-logo.png"
-          width="160"
-          height="160"
-          alt=""
+          width="48"
+          height="48"
+          alt="ICHEY logo"
           decoding="async"
         />
-        <h1 id="hero-heading" class="hero__wordmark">ICHEY</h1>
-        <p class="hero__mission">A Brighter, Kinder &amp; More Connected Community</p>
-      </div>
 
-      <div class="heart-divider" aria-hidden="true">
+        <span class="brand-lockup__wordmark">ICHEY</span>
+      </a>
+
+      <p class="site-header__tagline">
+        Connect <span aria-hidden="true">•</span>
+        Share <span aria-hidden="true">•</span>
+        Grow
+      </p>
+    </header>
+
+    <main id="main" class="site-main">
+      <section class="hero" aria-labelledby="hero-heading">
+        <div class="hero__brand">
+          <img
+            class="hero__logo"
+            src="ichey-logo.png"
+            width="160"
+            height="160"
+            alt=""
+            decoding="async"
+          />
+
+          <h1 id="hero-heading" class="hero__wordmark">ICHEY</h1>
+
+          <p class="hero__mission">
+            A Brighter, Kinder &amp; More Connected Community
+          </p>
+        </div>
+
+        <div class="heart-divider" aria-hidden="true">
+          <span class="heart-divider__line"></span>
+
+          <svg
+            class="heart-divider__heart"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              fill="currentColor"
+              d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+            />
+          </svg>
+
+          <span class="heart-divider__line"></span>
+        </div>
+
+        <div class="launch">
+          <p class="launch__eyebrow">
+            Something meaningful is on its way.
+          </p>
+
+          <h2 class="launch__title">Coming Soon</h2>
+
+          <p class="launch__lead">
+            Be among the first to experience what&rsquo;s next!
+          </p>
+        </div>
+
+        <section class="stores" aria-labelledby="stores-heading">
+          <h2 id="stores-heading" class="visually-hidden">
+            Mobile app availability
+          </h2>
+
+          <p class="stores__note">Available on app stores soon</p>
+
+          <div class="stores__badges">
+            <div
+              class="store-badge store-badge--play"
+              data-store="google-play"
+              aria-label="Google Play — coming soon"
+            >
+              <!-- Fixed: badge is stored in the repository root -->
+              <img
+                src="google-play-badge.svg"
+                width="180"
+                height="54"
+                alt=""
+                decoding="async"
+              />
+
+              <span class="store-badge__status">Coming soon</span>
+            </div>
+
+            <div
+              class="store-badge store-badge--apple"
+              data-store="apple-app-store"
+              aria-label="App Store — coming soon"
+            >
+              <!-- Fixed: badge is stored in the repository root -->
+              <img
+                src="apple-app-store-badge.svg"
+                width="160"
+                height="54"
+                alt=""
+                decoding="async"
+              />
+
+              <span class="store-badge__status">Coming soon</span>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="heart-divider heart-divider--footer" aria-hidden="true">
         <span class="heart-divider__line"></span>
-        <svg class="heart-divider__heart" viewBox="0 0 24 24" aria-hidden="true">
+
+        <svg
+          class="heart-divider__heart"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
           <path
             fill="currentColor"
             d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
           />
         </svg>
+
         <span class="heart-divider__line"></span>
       </div>
 
-      <div class="launch">
-        <p class="launch__eyebrow">Something meaningful is on its way.</p>
-        <h2 class="launch__title">Coming Soon</h2>
-        <p class="launch__lead">Be among the first to experience what&rsquo;s next!</p>
-      </div>
+      <p class="site-footer__title">STAY TUNED</p>
 
-      <section class="stores" aria-labelledby="stores-heading">
-        <h2 id="stores-heading" class="visually-hidden">Mobile app availability</h2>
-        <p class="stores__note">Available on app stores soon</p>
-        <div class="stores__badges">
-          <!--
-            Future store links (uncomment and set href when URLs are available):
-            <a class="store-badge store-badge--play" href="PLAY_STORE_URL" rel="noopener noreferrer" target="_blank">...</a>
-            <a class="store-badge store-badge--apple" href="APP_STORE_URL" rel="noopener noreferrer" target="_blank">...</a>
-          -->
-          <div
-            class="store-badge store-badge--play"
-            data-store="google-play"
-            aria-label="Google Play — coming soon"
-          >
-            <img
-              src="google-play-badge.svg"
-              width="180"
-              height="54"
-              alt=""
-              decoding="async"
-            />
-            <span class="store-badge__status">Coming soon</span>
-          </div>
-          <div
-            class="store-badge store-badge--apple"
-            data-store="apple-app-store"
-            aria-label="App Store — coming soon"
-          >
-            <img
-              src="apple-app-store-badge.svg"
-              width="160"
-              height="54"
-              alt=""
-              decoding="async"
-            />
-            <span class="store-badge__status">Coming soon</span>
-          </div>
-        </div>
-      </section>
-    </section>
-  </main>
-
-  <footer class="site-footer">
-    <div class="heart-divider heart-divider--footer" aria-hidden="true">
-      <span class="heart-divider__line"></span>
-      <svg class="heart-divider__heart" viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
-        />
-      </svg>
-      <span class="heart-divider__line"></span>
-    </div>
-    <p class="site-footer__title">STAY TUNED</p>
-    <p class="site-footer__tagline">Together, for a better tomorrow.</p>
-  </footer>
+      <p class="site-footer__tagline">
+        Together, for a better tomorrow.
+      </p>
+    </footer>
   </body>
 </html>
