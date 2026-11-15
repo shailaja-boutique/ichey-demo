@@ -44,8 +44,11 @@ const FLOAT_ORBIT = {
 };
 
 const LAUNCH_PHRASE = "LAUNCHING SOON";
+const LAUNCH_SPACE_INDEX = LAUNCH_PHRASE.indexOf(" ");
 const LAUNCH_STAGGER = 0.13;
 const LAUNCH_LETTER_DURATION = 0.58;
+const WINTER_SKY = 0xb8ddf5;
+const WINTER_FOG = 0xd8ebf8;
 
 const REVEAL = {
   logo: 1.12,
@@ -136,6 +139,7 @@ let confetti3d = [];
 let glowRing;
 let burstLight;
 let snowmanRoot;
+let winterRoot;
 let decorGifts = [];
 let rafId = 0;
 let boxHoverTilt = { x: 0, y: 0 };
@@ -503,7 +507,11 @@ function paintLaunchEmeraldGlyph(ctx, ch, scaledFont, cx, cy) {
   ctx.strokeText(ch, cx, cy);
 }
 
-function createLaunchLetterMesh(ch, fontPx, planeW, planeH, advancePx) {
+function launchWordPartForIndex(staggerIndex) {
+  return staggerIndex > LAUNCH_SPACE_INDEX ? "soon" : "launch";
+}
+
+function createLaunchLetterMesh(ch, fontPx, planeW, planeH, advancePx, wordPart = "launch") {
   const scaledFont = Math.round(fontPx * 1.5);
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
@@ -525,18 +533,25 @@ function createLaunchLetterMesh(ch, fontPx, planeW, planeH, advancePx) {
   ctx.font = `800 ${scaledFont}px "Segoe UI", system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  const isSoon = wordPart === "soon";
   const shade = ctx.createLinearGradient(0, cy - scaledFont * 0.42, 0, cy + scaledFont * 0.42);
-  shade.addColorStop(0, "#1f9d6a");
-  shade.addColorStop(0.42, "#0b6b47");
-  shade.addColorStop(1, "#064a32");
+  if (isSoon) {
+    shade.addColorStop(0, "#ff6b6b");
+    shade.addColorStop(0.45, "#e4283f");
+    shade.addColorStop(1, "#b80f28");
+  } else {
+    shade.addColorStop(0, "#4ecf82");
+    shade.addColorStop(0.42, "#28a85a");
+    shade.addColorStop(1, "#1a7a42");
+  }
   ctx.fillStyle = shade;
-  ctx.shadowColor = "rgba(6, 74, 50, 0.32)";
+  ctx.shadowColor = isSoon ? "rgba(180, 24, 48, 0.35)" : "rgba(20, 110, 60, 0.32)";
   ctx.shadowBlur = 8;
   ctx.shadowOffsetY = 2;
   ctx.fillText(ch, cx, cy);
   ctx.shadowBlur = 0;
-  ctx.lineWidth = Math.max(2, scaledFont * 0.018);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+  ctx.lineWidth = Math.max(2.5, scaledFont * 0.028);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
   ctx.strokeText(ch, cx, cy);
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -834,7 +849,56 @@ function createGiftBox() {
   );
   rimLip.renderOrder = 1;
 
+  addPlatformFairyLights();
   scene.add(boxRoot);
+}
+
+function addPlatformFairyLights() {
+  const ring = new THREE.Group();
+  const colors = [0xfff4c4, 0xffe88a, 0xfffbe8, 0xffd66d];
+  for (let i = 0; i < 22; i += 1) {
+    const a = (i / 22) * Math.PI * 2;
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.034, 8, 8),
+      new THREE.MeshBasicMaterial({ color: colors[i % colors.length] })
+    );
+    bulb.position.set(Math.cos(a) * 1.68, 0.058, Math.sin(a) * 1.68);
+    ring.add(bulb);
+  }
+  boxRoot.add(ring);
+}
+
+function createWinterEnvironment() {
+  winterRoot = new THREE.Group();
+  const snow = new THREE.Mesh(
+    new THREE.CircleGeometry(14, 56),
+    new THREE.MeshStandardMaterial({ color: 0xfafcff, roughness: 0.92, metalness: 0.02 })
+  );
+  snow.rotation.x = -Math.PI / 2;
+  snow.position.y = -0.015;
+  snow.receiveShadow = true;
+  winterRoot.add(snow);
+
+  const treeMat = mat(0x2f6b42, { roughness: 0.82 });
+  const trunkMat = mat(0x5c3d28, { roughness: 0.88 });
+  [[-4.2, -2.8, 0.85], [-5.1, -3.6, 0.95], [4.5, -2.6, 0.8], [5.3, -3.4, 0.9]].forEach(([x, z, sc]) => {
+    const tree = new THREE.Group();
+    tree.position.set(x, 0, z);
+    tree.scale.setScalar(sc);
+    addMesh(tree, new THREE.CylinderGeometry(0.09, 0.11, 0.38, 8), trunkMat, new THREE.Vector3(0, 0.19, 0));
+    addMesh(tree, new THREE.ConeGeometry(0.42, 0.95, 10), treeMat, new THREE.Vector3(0, 0.68, 0));
+    addMesh(tree, new THREE.ConeGeometry(0.32, 0.62, 10), treeMat, new THREE.Vector3(0, 1.02, 0));
+    winterRoot.add(tree);
+  });
+
+  const cabin = new THREE.Group();
+  cabin.position.set(0.6, 0, -5.4);
+  addMesh(cabin, new THREE.BoxGeometry(1.5, 0.95, 1.05), mat(0x9a6b4a, { roughness: 0.78 }), new THREE.Vector3(0, 0.48, 0));
+  addMesh(cabin, new THREE.BoxGeometry(1.62, 0.1, 1.15), mat(0xf2f6fa, { roughness: 0.75 }), new THREE.Vector3(0, 1.01, 0));
+  addMesh(cabin, new THREE.BoxGeometry(0.35, 0.42, 0.08), mat(0x6eb5ff, { roughness: 0.2, metalness: 0.1 }), new THREE.Vector3(0.2, 0.42, 0.54));
+  winterRoot.add(cabin);
+
+  scene.add(winterRoot);
 }
 
 function nameTypography() {
@@ -906,7 +970,14 @@ function createInteriorReveal(logoTexture) {
     if (!spec.mesh) return;
     const letterRoot = new THREE.Group();
     letterRoot.add(
-      createLaunchLetterMesh(spec.ch, launchType.font, spec.planeW, spec.planeH, spec.advancePx)
+      createLaunchLetterMesh(
+        spec.ch,
+        launchType.font,
+        spec.planeW,
+        spec.planeH,
+        spec.advancePx,
+        launchWordPartForIndex(spec.staggerIndex)
+      )
     );
     letterRoot.userData = {
       char: spec.ch,
@@ -1854,21 +1925,21 @@ function updateSanta(timeS) {
 }
 
 function setupLights() {
-  scene.add(new THREE.HemisphereLight(0xfff8ff, 0xffb4c4, 1));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.38));
-  const key = new THREE.DirectionalLight(0xffffff, 1.38);
-  key.position.set(4, 7, 5);
+  scene.add(new THREE.HemisphereLight(0xd8eeff, 0xfff5f8, 1.15));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.42));
+  const key = new THREE.DirectionalLight(0xfff9f0, 1.42);
+  key.position.set(4, 8, 5);
   key.castShadow = true;
   key.shadow.bias = -0.00022;
   key.shadow.normalBias = 0.02;
   key.shadow.mapSize.set(viewport.narrow ? 768 : 1024, viewport.narrow ? 768 : 1024);
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0x9bf6ff, 0.5);
-  fill.position.set(-4, 3, 2);
+  const fill = new THREE.DirectionalLight(0xa8dcff, 0.55);
+  fill.position.set(-5, 4, 2);
   scene.add(fill);
-  const warm = new THREE.DirectionalLight(0xffd6a5, 0.42);
-  warm.position.set(0, 2, -4);
-  scene.add(warm);
+  const rim = new THREE.DirectionalLight(0xffe6c8, 0.35);
+  rim.position.set(0, 3, -5);
+  scene.add(rim);
 }
 
 function getPhaseT(t) {
@@ -2112,11 +2183,13 @@ function initThree() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0xfff5f8, 0.036);
+  scene.background = new THREE.Color(WINTER_SKY);
+  scene.fog = new THREE.FogExp2(WINTER_FOG, 0.028);
   camera = new THREE.PerspectiveCamera(43, viewport.aspect, 0.1, 50);
   applyResponsiveCamera();
 
   setupLights();
+  createWinterEnvironment();
   createGiftBox();
   createSnowman();
   createSceneDecor();
